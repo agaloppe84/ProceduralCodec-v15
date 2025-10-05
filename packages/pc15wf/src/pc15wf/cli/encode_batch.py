@@ -52,15 +52,20 @@ def _try_orchestrator(args, cfg: Dict[str, Any]) -> bool:
         from pc15wf.orchestrator import plan_encode, run_encode  # type: ignore
     except Exception:
         return False
+
     mani_path = args.manifest or None
     if mani_path is None or not Path(mani_path).exists():
         mani_path = plan_encode(args.images, args.out, cfg, manifest_path=args.manifest)
-    if args.only-plan:
+
+    # ✅ corrige le bug: --only-plan => args.only_plan
+    if getattr(args, "only_plan", False):
         logging.info("Manifeste créé: %s", mani_path)
         return True
+
     summary = run_encode(mani_path, resume=args.resume, stats_jsonl=args.stats_jsonl)
     logging.info("Terminé: %d/%d OK, %d erreurs", summary["done"], summary["total"], summary["errors"])
     return True
+
 
 def _fallback_direct(args, cfg: Dict[str, Any]) -> int:
     device = pick_device(force_cpu=args.force_cpu)
