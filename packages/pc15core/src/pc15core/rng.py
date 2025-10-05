@@ -23,6 +23,11 @@ def derive_seed64(*keys: int) -> int:
 def _to_int64_signed(u: int) -> int:
     return u - _MOD64 if (u & _SIGNBIT) else u
 
+# ✨ NOUVEAU: helper public
+def to_int64_signed(u: int) -> int:
+    """Public wrapper: unsigned 64-bit -> signed int64 (two's complement)."""
+    return _to_int64_signed(u)
+
 def seed_tensor(keys: torch.Tensor) -> torch.Tensor:
     out = keys.clone().to(dtype=torch.int64)
     flat = out.view(-1)
