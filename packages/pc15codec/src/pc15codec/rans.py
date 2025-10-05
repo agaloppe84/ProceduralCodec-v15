@@ -32,7 +32,7 @@ Notes
 - `precision` bornée à [1..15] pour garder les freqs sur u16 (base <= 32768).
 - Les symboles absents du corpus ont freq=0 ; ceux présents ont au moins 1.
 - rANS encode en parcourant les symboles **à l'envers** et émet des chunks 16-bit
-  LSB-first lors de la renormalisation ; le décodeur lit ces chunks à rebours.
+  LSB-first lors de la renormalisation ; le décodeur lit ces chunks **à rebours (LIFO)**.
 - Compat: si le payload **ne** commence **pas** par MAGIC, on renvoie les octets tels quels
   (mode “passthrough” utile en phase de transition).
 """
@@ -285,7 +285,7 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
     cdf[256] = acc
 
     res = [0] * nsym
-    ptr = 0  # on lit les chunks dans l'ordre d'émission (début -> fin)
+    ptr = len(stream)  # LIFO : on lit les chunks à rebours (fin -> début)
     mask = (1 << P) - 1
 
     for i in range(nsym):
@@ -296,14 +296,14 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
         c = cdf[s]
         x = f * (x >> P) + (r - c)
 
-        # Renormalisation: on tire des chunks 16-bit depuis la fin
+        # Renormalisation: on tire des chunks 16-bit depuis la fin du flux
         T = _renorm_threshold(1, P)  # = 1<<16
         while x < T:
-            if ptr + 2 > len(stream):
+            if ptr < 2:
                 raise ValueError("rANS stream underflow")
+            ptr -= 2
             lo = stream[ptr]
             hi = stream[ptr + 1]
-            ptr += 2
             x = (x << 16) | (hi << 8) | lo
 
     return res
