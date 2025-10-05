@@ -285,7 +285,7 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
     cdf[256] = acc
 
     res = [0] * nsym
-    ptr = len(stream)
+    ptr = 0  # on lit les chunks dans l'ordre d'émission (début -> fin)
     mask = (1 << P) - 1
 
     for i in range(nsym):
@@ -297,13 +297,13 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
         x = f * (x >> P) + (r - c)
 
         # Renormalisation: on tire des chunks 16-bit depuis la fin
-        T = _renorm_threshold(1, P)  # seuil avec freq minimale (=1)
+        T = _renorm_threshold(1, P)  # = 1<<16
         while x < T:
-            if ptr < 2:
+            if ptr + 2 > len(stream):
                 raise ValueError("rANS stream underflow")
-            ptr -= 2
             lo = stream[ptr]
             hi = stream[ptr + 1]
+            ptr += 2
             x = (x << 16) | (hi << 8) | lo
 
     return res
