@@ -130,6 +130,9 @@ FOOTER_SIZE = 12  # tiles_count (u32), reserved (u32), global_crc32 (u32)
 FIXED_FMT  = "<4sHHIIHHBBHI"
 FIXED_SIZE = struct.calcsize(FIXED_FMT)  # = 28 bytes
 
+TILE_HEAD_FMT  = "<IHHIHHI"
+TILE_HEAD_SIZE = struct.calcsize(TILE_HEAD_FMT)  # = 20 bytes
+
 # ----------------------------- helpers ------------------------------------
 
 def _crc32(data: bytes) -> int:
@@ -254,15 +257,15 @@ def unpack_header(data: bytes) -> Tuple[Header, int]:
 
 def pack_tile_record(rec: TileRec) -> bytes:
     payload_len = len(rec.payload)
-    head = struct.pack("<IHHIHHI", rec.tile_id, rec.gen_id, rec.qv_id, rec.seed, rec.rec_flags, rec.payload_fmt, payload_len)
+    head = struct.pack(TILE_HEAD_FMT, rec.tile_id, rec.gen_id, rec.qv_id, rec.seed, rec.rec_flags, rec.payload_fmt, payload_len)
     pad = _pad4(payload_len)
     return head + rec.payload + (b"\x00" * pad)
 
 def unpack_tile_record(data: bytes, offset: int = 0) -> Tuple[TileRec, int]:
-    if len(data) < offset + 18:
+    if len(data) < offset + TILE_HEAD_SIZE:
         raise ValueError("Tile record truncated")
-    tile_id, gen_id, qv_id, seed, rec_flags, payload_fmt, payload_len = struct.unpack_from("<IHHIHHI", data, offset)
-    offset += 18
+    tile_id, gen_id, qv_id, seed, rec_flags, payload_fmt, payload_len = struct.unpack_from(TILE_HEAD_FMT, data, offset)
+    offset += TILE_HEAD_SIZE
     end = offset + payload_len
     if len(data) < end:
         raise ValueError("Tile payload truncated")
@@ -278,6 +281,7 @@ def unpack_tile_record(data: bytes, offset: int = 0) -> Tuple[TileRec, int]:
         payload_fmt=int(payload_fmt),
         payload=bytes(payload),
     ), next_off
+
 
 # ----------------------------- pack/unpack footer -------------------------
 
