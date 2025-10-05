@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+**/.DS_Store
+._*
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Envs
+.venv/
+.env
+
+# Test caches
+.pytest_cache/
+
+# Artefacts PC15
+artifacts/
+outputs/
