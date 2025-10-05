@@ -187,7 +187,8 @@ def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
     if sum(freqs) != (1 << P):
         raise ValueError("freqs must sum to base (1<<precision)")
 
-    x = 1  # initial state (non-zero)
+    # État initial haut (convention rANS 32-bit avec renorm 16-bit)
+    x = 1 << 16
     out = bytearray()
 
     # Encode en ordre inverse
