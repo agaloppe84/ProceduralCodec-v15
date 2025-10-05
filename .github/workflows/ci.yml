@@ -27,4 +27,4 @@ jobs:
       - name: Test
         run: |
           export PC15_ALLOW_CPU_TESTS=1
-          pytest -vv -s --maxfail=1 --disable-warnings
+          pytest -q --maxfail=1 --disable-warnings -o log_cli=true -o log_cli_level=INFO
