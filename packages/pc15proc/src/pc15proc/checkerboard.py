@@ -3,15 +3,14 @@ import torch
 from .api import Generator, GeneratorInfo, ParamSpec
 from .utils import grid
 
-class Stripes(Generator):
+class Checker(Generator):
     @property
     def info(self) -> GeneratorInfo:
         return GeneratorInfo(
-            name="STRIPES",
+            name="CHECKER",
             param_specs=(
-                ParamSpec("freq", "float", (0.5, 64.0), "cycles/img", 0.5),
+                ParamSpec("cells", "int", (2, 512), "per img", 2.0),
                 ParamSpec("angle_deg", "float", (0.0, 180.0), "deg", 5.0),
-                ParamSpec("phase", "float", (0.0, 6.28318), "rad", 0.2),
             ),
             supports_noise=False,
         )
@@ -22,11 +21,17 @@ class Stripes(Generator):
         h, w = tiles_hw
         xx, yy = grid(h, w, device=device, dtype=dtype)
         xx = xx.unsqueeze(0); yy = yy.unsqueeze(0)
-        freq  = params[:, 0].view(B,1,1).to(dtype)
-        ang   = torch.deg2rad(params[:, 1]).view(B,1,1).to(dtype)
-        phase = params[:, 2].view(B,1,1).to(dtype)
-        u = xx*torch.cos(ang) + yy*torch.sin(ang)
-        s = torch.sin(2*torch.pi*freq*u + phase)
-        return s.clamp_(-1,1).unsqueeze(1)
+        ang = torch.deg2rad(params[:,1]).view(B,1,1).to(dtype)
+        c = torch.cos(ang); s = torch.sin(ang)
+        xr = xx*c - yy*s
+        yr = xx*s + yy*c
+        cells = params[:,0].view(B,1,1).to(dtype)
+        fx = (xr+1.0)*cells*0.5
+        fy = (yr+1.0)*cells*0.5
+        xi = torch.floor(fx).to(torch.int64)
+        yi = torch.floor(fy).to(torch.int64)
+        v = ((xi + yi) & 1).to(dtype)
+        out = v*2.0 - 1.0
+        return out.unsqueeze(1)
 
-GEN = Stripes()
+GEN = Checker()
