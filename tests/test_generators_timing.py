@@ -25,7 +25,7 @@ def mid_params(info):
 
 def test_render_timing_smoke():
     register_all()
-    infos = list_generators()[:10]  # échantillon
+    infos = sorted(list_generators(), key=lambda i: i.name)
     device = dev()
     dtype = torch.float16 if device.type=="cuda" else torch.float32
     for gi in infos:
