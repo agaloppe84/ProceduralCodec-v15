@@ -199,23 +199,26 @@ class Composite(Generator):
         # ------------------------------------------------------------------
         if (pal_id != 0).any():
             # Remap [-1,1] -> [0,1]
-            t = ((y + 1.0) * 0.5).clamp(0.0, 1.0)  # [B,1,H,W]
+            t = ((y + 1.0) * 0.5).clamp(0.0, 1.0)
 
-            # PALETTE2 : t^gamma
-            pal2_mask = (pal_id == 1).view(B, 1, 1, 1)  # [B,1,1,1] -> broadcast
-            if pal2_mask.any():
-                gamma = (0.6 + 1.4 * pal_q).to(dtype)  # [B,1,1]
-                t_pal2 = t.pow(gamma)                  # [B,1,H,W] par broadcast
-                t = torch.where(pal2_mask, t_pal2, t)  # applique seulement où pal2
-
-            # PALETTE3 : mix S-curve
+            # Masques 4D pour broadcast propre
+            pal2_mask = (pal_id == 1).view(B, 1, 1, 1)
             pal3_mask = (pal_id == 2).view(B, 1, 1, 1)
+
+            if pal2_mask.any():
+                # gamma: [B,1,1,1]
+                gamma4 = (0.6 + 1.4 * pal_q.to(dtype)).view(B, 1, 1, 1)
+                t_pal2 = t.pow(gamma4)  # [B,1,H,W]
+                t = torch.where(pal2_mask, t_pal2, t)
+
             if pal3_mask.any():
-                a = (0.3 + 0.4 * pal_q).to(dtype)      # [B,1,1]
-                t_pal3 = (1 - a) * t + a * (t * (2 - t))
-                t = torch.where(pal3_mask, t_pal3, t)
+                # a: [B,1,1,1]
+                a4 = (0.3 + 0.4 * pal_q.to(dtype)).view(B, 1, 1, 1)
+                t_s = (1.0 - a4) * t + a4 * (t * (2.0 - t))  # [B,1,H,W]
+                t = torch.where(pal3_mask, t_s, t)
 
             y = (t * 2.0 - 1.0).clamp(-1.0, 1.0)
+
 
 
         return y.clamp(-1, 1)
