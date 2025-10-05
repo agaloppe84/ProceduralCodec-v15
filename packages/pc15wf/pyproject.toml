@@ -11,3 +11,9 @@ dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.scripts]
+pc15-encode  = "pc15wf.cli.encode_batch:main"
+pc15-decode  = "pc15wf.cli.decode:main"
+pc15-metrics = "pc15wf.cli.metrics:main"
+pc15-audit   = "pc15wf.cli.audit_generators:main"
