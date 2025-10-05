@@ -155,13 +155,21 @@ def build_rans_tables(symbols: List[int], precision: int = 12) -> Dict[str, obje
 
 
 # -----------------------------------------------------------------------------
-# Core rANS 32-bit (table-based), LSB-first byte stream for renormalization
+# Core rANS 32-bit (table-based)
 # -----------------------------------------------------------------------------
-def _renorm_threshold(freq: int, precision: int) -> int:
+def _enc_threshold(freq: int, precision: int) -> int:
     """
-    Seuil de renormalisation : on émet des chunks 16-bit tant que x >= (freq << 16).
+    Seuil encodeur : émettre tant que x >= f << (32 - P)
+    (garantit x < 2^32 après l'étape core).
     """
-    return (int(freq) << 16)
+    return int(freq) << (32 - int(precision))
+
+
+def _dec_threshold() -> int:
+    """
+    Seuil décodeur : recharger des 16 bits tant que x < (1 << 16).
+    """
+    return 1 << 16
 
 
 def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
@@ -197,14 +205,14 @@ def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
         f = freqs[s]
         c = cdf[s]
         if f <= 0:
-            # symbole absent des tables → impossible à coder
             raise ValueError(f"zero-frequency symbol encountered: {s}")
-        T = _renorm_threshold(f, P)
+        # Renormalisation encodeur
+        T = _enc_threshold(f, P)  # f << (32 - P)
         while x >= T:
             out.append(x & 0xFF)
             out.append((x >> 8) & 0xFF)
             x >>= 16
-        # core step
+        # Étape core
         x = ((x // f) << P) + (x % f) + c
 
     # état final (little-endian u32)
@@ -287,6 +295,7 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
     res = [0] * nsym
     ptr = len(stream)  # LIFO : on lit les chunks à rebours (fin -> début)
     mask = (1 << P) - 1
+    Tdec = _dec_threshold()  # = 1<<16
 
     for i in range(nsym):
         r = x & mask
@@ -296,9 +305,8 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
         c = cdf[s]
         x = f * (x >> P) + (r - c)
 
-        # Renormalisation: on tire des chunks 16-bit depuis la fin du flux
-        T = _renorm_threshold(1, P)  # = 1<<16
-        while x < T:
+        # Renormalisation décodeur
+        while x < Tdec:
             if ptr < 2:
                 raise ValueError("rANS stream underflow")
             ptr -= 2
