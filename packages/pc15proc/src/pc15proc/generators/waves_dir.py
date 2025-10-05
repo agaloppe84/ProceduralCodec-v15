@@ -1,4 +1,4 @@
-from __future____ import annotations
+from __future__ import annotations
 import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
