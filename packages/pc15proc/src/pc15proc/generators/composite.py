@@ -14,7 +14,7 @@ _WARPS = ("NONE", "FBM", "RIPPLE", "SWIRL")
 _MASKS = ("NONE", "VORONOI_EDGES", "DOTS", "HEX_GRID")
 _PALS  = ("NONE", "PALETTE2", "PALETTE3")
 
-# Constante int64 signée sûre (évite l'overflow CPU)
+# Constante int64 signée sûre
 _GOLDEN = to_int64_signed(0x9E3779B97F4A7C15)
 
 
@@ -53,8 +53,8 @@ class Composite(Generator):
         B = params.shape[0]
         h, w = tiles_hw
         xx, yy = grid(h, w, device=device, dtype=dtype)  # [1,h,w]
-        xx = xx.expand(B, h, w)
-        yy = yy.expand(B, h, w)
+        xx = xx.expand(B, h, w).contiguous()
+        yy = yy.expand(B, h, w).contiguous()
 
         # Decode params (shape-safe)
         base_id = params[:, 0].round().clamp(0, len(_BASES) - 1).to(torch.int64)
@@ -107,11 +107,8 @@ class Composite(Generator):
         # 2) WARP (optionnel)
         # ------------------------------------------------------------------
         if (warp_id != 0).any():
-            # Crée un champ de coordonnées final pour grid_sample
-            # Coordonnées normalisées attendues dans [-1,1]
-            # dx,dy ~ [-1,1] puis pondérées par amplitude
-            amp = (0.02 + 0.18 * warp_q).to(dtype)  # amplitude max ~0.2 (soft)
-            grid_x = xx.clone()
+            amp = (0.02 + 0.18 * warp_q).to(dtype)  # [B,1,1]
+            grid_x = xx.clone()  # [B,H,W]
             grid_y = yy.clone()
 
             # FBM-like (Perlin 2D) -> displacement
@@ -121,41 +118,44 @@ class Composite(Generator):
                 for i in ixs.tolist():
                     sc = (16.0 + 240.0 * float(warp_q[i, 0, 0].item()))
                     s64 = seed_warp[i:i+1].view(1, 1, 1)
-                    nx = perlin2d(xx[i:i+1], yy[i:i+1], torch.tensor([[[sc]]], device=device, dtype=dtype), s64)
-                    ny = perlin2d(xx[i:i+1], yy[i:i+1], torch.tensor([[[sc * 1.37]]], device=device, dtype=dtype), s64 ^ _GOLDEN)
-                    grid_x[i] = (xx[i] + amp[i] * nx[0])
-                    grid_y[i] = (yy[i] + amp[i] * ny[0])
+                    nx = perlin2d(xx[i:i+1], yy[i:i+1],
+                                  torch.tensor([[[sc]]], device=device, dtype=dtype), s64)  # [1,H,W]
+                    ny = perlin2d(xx[i:i+1], yy[i:i+1],
+                                  torch.tensor([[[sc * 1.37]]], device=device, dtype=dtype),
+                                  (s64 ^ _GOLDEN))  # [1,H,W]
+                    grid_x[i] = xx[i] + amp[i] * nx[0]
+                    grid_y[i] = yy[i] + amp[i] * ny[0]
 
             # RIPPLE radial
             ripple_mask = (warp_id == 2)
             if ripple_mask.any():
                 ixs = torch.nonzero(ripple_mask, as_tuple=False).flatten()
-                r = torch.sqrt(xx * xx + yy * yy + 1e-6)
                 for i in ixs.tolist():
+                    r_i = torch.sqrt(xx[i:i+1] * xx[i:i+1] + yy[i:i+1] * yy[i:i+1] + 1e-6)  # [1,H,W]
                     freq = 4.0 + 12.0 * float(warp_q[i, 0, 0].item())
                     phase = (seed_warp[i, 0, 0].float() % 1000.0) / 1000.0
-                    s = torch.sin(2.0 * math.pi * (r * freq + phase))
-                    c = torch.cos(2.0 * math.pi * (r * freq + phase))
-                    grid_x[i] = (xx[i] + amp[i] * s)
-                    grid_y[i] = (yy[i] + amp[i] * c)
+                    s = torch.sin(2.0 * math.pi * (r_i * freq + phase))  # [1,H,W]
+                    c = torch.cos(2.0 * math.pi * (r_i * freq + phase))  # [1,H,W]
+                    grid_x[i] = xx[i] + amp[i] * s[0]
+                    grid_y[i] = yy[i] + amp[i] * c[0]
 
             # SWIRL : rotation dépendant du rayon
             swirl_mask = (warp_id == 3)
             if swirl_mask.any():
                 ixs = torch.nonzero(swirl_mask, as_tuple=False).flatten()
-                r = torch.sqrt(xx * xx + yy * yy)
                 for i in ixs.tolist():
+                    r_i = torch.sqrt(xx[i:i+1] * xx[i:i+1] + yy[i:i+1] * yy[i:i+1])  # [1,H,W]
                     k = 1.0 + 3.0 * float(warp_q[i, 0, 0].item())
-                    theta = k * r  # ~[0, k*sqrt(2)]
-                    ct = torch.cos(theta)
-                    st = torch.sin(theta)
-                    X = xx[i] * ct - yy[i] * st
-                    Y = xx[i] * st + yy[i] * ct
+                    theta = k * r_i  # [1,H,W]
+                    ct = torch.cos(theta)  # [1,H,W]
+                    st = torch.sin(theta)  # [1,H,W]
+                    X = xx[i] * ct[0] - yy[i] * st[0]
+                    Y = xx[i] * st[0] + yy[i] * ct[0]
                     grid_x[i] = (1.0 - amp[i]) * xx[i] + amp[i] * X
                     grid_y[i] = (1.0 - amp[i]) * yy[i] + amp[i] * Y
 
             # Applique la warp via grid_sample (bilinear)
-            grid_xy = torch.stack([grid_x.clamp(-1, 1), grid_y.clamp(-1, 1)], dim=-1)  # [B,h,w,2]
+            grid_xy = torch.stack([grid_x.clamp(-1, 1), grid_y.clamp(-1, 1)], dim=-1)  # [B,H,W,2]
             y = torch.nn.functional.grid_sample(
                 y, grid_xy, mode="bilinear", padding_mode="border", align_corners=True
             )
@@ -165,34 +165,30 @@ class Composite(Generator):
         # ------------------------------------------------------------------
         if (mask_id != 0).any():
             y_mean = y.mean(dim=(2, 3), keepdim=True)  # [B,1,1,1]
-            # Worley F1 pour deux variantes simples
-            sc = (20.0 + 220.0 * mask_q).to(dtype)  # échelle cellulaire
-            d = worley_f1(xx[:1], yy[:1], sc, seed_mask.view(B, 1, 1), metric="euclidean")  # [B,h,w] in [0,1]
+            sc = (20.0 + 220.0 * mask_q).to(dtype)  # [B,1,1]
+            # worley_f1 broadcast : xx[:1]/yy[:1] -> [1,H,W], sc/seed -> [B,1,1] => sortie [B,H,W]
+            d = worley_f1(xx[:1], yy[:1], sc, seed_mask.view(B, 1, 1), metric="euclidean")  # [B,H,W]
 
             mask = torch.zeros((B, 1, h, w), device=device, dtype=dtype)
 
-            # VORONOI_EDGES : bords fins autour des arêtes (d petit -> centre; edges ~ valeurs intermédiaires)
-            ve_mask = (mask_id == 1)
+            ve_mask = (mask_id == 1)  # VORONOI_EDGES
             if ve_mask.any():
                 ixs = torch.nonzero(ve_mask, as_tuple=False).flatten().tolist()
                 sharp = 8.0
-                m = torch.exp(-sharp * d)  # ~1 aux centres, ~0 ailleurs
-                m = 1.0 - m  # inversé -> edges brillants
+                m = 1.0 - torch.exp(-sharp * d)   # edges brillants
                 mask[ixs] = m[ixs].unsqueeze(1)
 
-            # DOTS : seuil doux près des centres des cellules
-            dots_mask = (mask_id == 2)
+            dots_mask = (mask_id == 2)  # DOTS
             if dots_mask.any():
                 ixs = torch.nonzero(dots_mask, as_tuple=False).flatten().tolist()
                 t = 0.12
                 m = 1.0 - _smoothstep(d, 0.0, t)  # spots ~1 au centre
                 mask[ixs] = m[ixs].unsqueeze(1)
 
-            # HEX_GRID : fallback simple via edges (on pourrait raffiner plus tard)
-            hex_mask = (mask_id == 3)
+            hex_mask = (mask_id == 3)  # HEX_GRID (approx soft edges)
             if hex_mask.any():
                 ixs = torch.nonzero(hex_mask, as_tuple=False).flatten().tolist()
-                m = (1.0 - d).pow(2.0)  # edges soft
+                m = (1.0 - d).pow(2.0)
                 mask[ixs] = m[ixs].unsqueeze(1)
 
             # Blend
@@ -202,20 +198,19 @@ class Composite(Generator):
         # 4) PALETTE (optionnel) : courbes tonales grises
         # ------------------------------------------------------------------
         if (pal_id != 0).any():
-            # Remap [-1,1] -> [0,1]
             t = ((y + 1.0) * 0.5).clamp(0.0, 1.0)
 
             pal2 = (pal_id == 1)
             if pal2.any():
                 ixs = torch.nonzero(pal2, as_tuple=False).flatten().tolist()
-                gamma = 0.6 + 1.4 * pal_q  # [0.6, 2.0]
+                gamma = (0.6 + 1.4 * pal_q).to(dtype)  # [B,1,1]
                 t[ixs] = t[ixs].pow(gamma[ixs])
 
             pal3 = (pal_id == 2)
             if pal3.any():
                 ixs = torch.nonzero(pal3, as_tuple=False).flatten().tolist()
-                a = 0.3 + 0.4 * pal_q       # [0.3,0.7]
-                t[ixs] = (1 - a[ixs]) * t[ixs] + a[ixs] * (t[ixs] * (2 - t[ixs]))  # S-curve douce
+                a = (0.3 + 0.4 * pal_q).to(dtype)  # [B,1,1]
+                t[ixs] = (1 - a[ixs]) * t[ixs] + a[ixs] * (t[ixs] * (2 - t[ixs]))
 
             y = (t * 2.0 - 1.0).clamp(-1.0, 1.0)
 

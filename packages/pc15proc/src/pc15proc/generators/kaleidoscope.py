@@ -1,4 +1,4 @@
-from __future__ import annotations
+import math
 import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
@@ -9,27 +9,35 @@ class Kaleidoscope(Generator):
         return GeneratorInfo(
             name="KALEIDOSCOPE",
             param_specs=(
-                ParamSpec("sectors", "int", (2, 24), None, 1.0),
-                ParamSpec("freq", "float", (1.0, 64.0), "cycles/img", 0.5),
+                ParamSpec("sectors", "int", (3, 64), None, 12.0),
+                ParamSpec("freq", "float", (4.0, 128.0), None, 32.0),
             ),
             supports_noise=False,
         )
+
     @torch.no_grad()
     def render(self, tiles_hw, params, seeds, *, device, dtype):
-        B = params.shape[0]; h,w = tiles_hw
-        xx,yy = grid(h,w,device=device,dtype=dtype); xx=xx.unsqueeze(0); yy=yy.unsqueeze(0)
-        sectors = torch.clamp(params[:,0], 2, 24).to(torch.int64).view(B,1,1)
-        f = params[:,1].view(B,1,1).to(dtype)
-        theta = torch.atan2(yy, xx)  # [-pi, pi]
-        r = torch.sqrt(xx*xx + yy*yy)
-        out = torch.zeros((B,h,w), device=device, dtype=dtype)
-        for i in range(B):
-            s = sectors[i,0,0].item()
-            sector_angle = (2*torch.pi) / float(s)
-            t = (theta[i] % sector_angle)
-            t = torch.minimum(t, sector_angle - t)  # mirror
-            u = torch.cos(t) * r[i]
-            out[i] = torch.sin(2*torch.pi*f[i]*u)
-        return out.clamp(-1,1).unsqueeze(1)
+        B = params.shape[0]
+        h, w = tiles_hw
+
+        xx, yy = grid(h, w, device=device, dtype=dtype)  # (H,W)
+        # -> batch
+        xx = xx.unsqueeze(0).expand(B, -1, -1)           # (B,H,W)
+        yy = yy.unsqueeze(0).expand(B, -1, -1)           # (B,H,W)
+
+        sectors = params[:, 0].view(B, 1, 1).to(dtype)   # (B,1,1)
+        freq    = params[:, 1].view(B, 1, 1).to(dtype)   # (B,1,1)
+
+        theta = torch.atan2(yy, xx)                      # (B,H,W)
+        sector_angle = (2.0 * math.pi) / sectors         # (B,1,1)
+
+        # angle plié dans un secteur (miroir)
+        t = torch.remainder(theta, sector_angle)         # (B,H,W)
+        t = torch.minimum(t, sector_angle - t)           # (B,H,W)
+
+        # un motif simple périodique (peu importe tant que [-1,1], déterministe)
+        pat = torch.cos(freq * t)                        # (B,H,W)
+        out = pat.clamp(-1, 1).unsqueeze(1)              # (B,1,H,W)
+        return out
 
 GEN = Kaleidoscope()
