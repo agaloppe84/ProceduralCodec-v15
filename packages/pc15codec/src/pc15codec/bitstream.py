@@ -127,6 +127,9 @@ MAGIC = b"PC15"
 VERSION = 15
 FOOTER_SIZE = 12  # tiles_count (u32), reserved (u32), global_crc32 (u32)
 
+FIXED_FMT  = "<4sHHIIHHBBHI"
+FIXED_SIZE = struct.calcsize(FIXED_FMT)  # = 28 bytes
+
 # ----------------------------- helpers ------------------------------------
 
 def _crc32(data: bytes) -> int:
@@ -196,26 +199,28 @@ def pack_header(h: Header) -> bytes:
     return header
 
 def unpack_header(data: bytes) -> Tuple[Header, int]:
-    if len(data) < 4 or data[:4] != MAGIC:
-        raise ValueError("Invalid magic")
-    if len(data) < 24:  # minimal fixed part without meta/CRC
+    if len(data) < FIXED_SIZE:  # au moins la partie fixe
         raise ValueError("Header too short")
+    if data[:4] != MAGIC:
+        raise ValueError("Invalid magic")
 
     magic, ver, hdr_len, width, height, tile, overlap, colorspace, flags, reserved, meta_len = struct.unpack_from(
-        "<4sHHIIHHBBHI", data, 0
+        FIXED_FMT, data, 0
     )
     if int(ver) != VERSION:
         raise ValueError(f"Incompatible bitstream version {ver} (expected {VERSION})")
     if len(data) < hdr_len:
         raise ValueError("Incomplete header bytes")
-    if hdr_len < 24 + 4:  # fixed + crc
+    if hdr_len < FIXED_SIZE + 4:  # fixe + CRC (sans meta)
         raise ValueError("Header length invalid")
-    # meta
-    meta_off = 24
+
+    # meta JSON
+    meta_off = FIXED_SIZE
     meta_json = data[meta_off:meta_off + meta_len]
     if len(meta_json) != meta_len:
         raise ValueError("Header meta truncated")
-    # alignment padding
+
+    # alignement + position du CRC
     pad = _pad4(meta_len)
     crc_off = meta_off + meta_len + pad
     if crc_off + 4 != hdr_len:
@@ -243,6 +248,7 @@ def unpack_header(data: bytes) -> Tuple[Header, int]:
         meta=meta or None,
     )
     return h, int(hdr_len)
+
 
 # ----------------------------- pack/unpack tile record --------------------
 
