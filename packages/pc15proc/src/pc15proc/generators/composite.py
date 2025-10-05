@@ -198,21 +198,25 @@ class Composite(Generator):
         # 4) PALETTE (optionnel) : courbes tonales grises
         # ------------------------------------------------------------------
         if (pal_id != 0).any():
-            t = ((y + 1.0) * 0.5).clamp(0.0, 1.0)
+            # Remap [-1,1] -> [0,1]
+            t = ((y + 1.0) * 0.5).clamp(0.0, 1.0)  # [B,1,H,W]
 
-            pal2 = (pal_id == 1)
-            if pal2.any():
-                ixs = torch.nonzero(pal2, as_tuple=False).flatten().tolist()
+            # PALETTE2 : t^gamma
+            pal2_mask = (pal_id == 1).view(B, 1, 1, 1)  # [B,1,1,1] -> broadcast
+            if pal2_mask.any():
                 gamma = (0.6 + 1.4 * pal_q).to(dtype)  # [B,1,1]
-                t[ixs] = t[ixs].pow(gamma[ixs])
+                t_pal2 = t.pow(gamma)                  # [B,1,H,W] par broadcast
+                t = torch.where(pal2_mask, t_pal2, t)  # applique seulement où pal2
 
-            pal3 = (pal_id == 2)
-            if pal3.any():
-                ixs = torch.nonzero(pal3, as_tuple=False).flatten().tolist()
-                a = (0.3 + 0.4 * pal_q).to(dtype)  # [B,1,1]
-                t[ixs] = (1 - a[ixs]) * t[ixs] + a[ixs] * (t[ixs] * (2 - t[ixs]))
+            # PALETTE3 : mix S-curve
+            pal3_mask = (pal_id == 2).view(B, 1, 1, 1)
+            if pal3_mask.any():
+                a = (0.3 + 0.4 * pal_q).to(dtype)      # [B,1,1]
+                t_pal3 = (1 - a) * t + a * (t * (2 - t))
+                t = torch.where(pal3_mask, t_pal3, t)
 
             y = (t * 2.0 - 1.0).clamp(-1.0, 1.0)
+
 
         return y.clamp(-1, 1)
 
