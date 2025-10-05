@@ -43,9 +43,12 @@ def test_api_contracts_global():
     # 1) Auto-discovery & registry
     names = register_all(verbose=False)
     infos = list_generators()
-    log.info("Discovered %d generators; sample: %s", len(infos), ", ".join(n.info.name for n in infos[:10]))
+    log.info(
+        "Discovered %d generators; sample: %s",
+        len(infos),
+        ", ".join(i.name for i in infos[:10]),
+    )
     assert len(infos) >= 20, "At least 20 generators expected"
-    # uniqueness of names
     all_names = [i.name for i in infos]
     assert len(set(all_names)) == len(all_names)
 
@@ -58,21 +61,23 @@ def test_api_contracts_global():
     P = pc.to_tensor(params, device=dev, dtype=dtype).unsqueeze(0)
     seeds = torch.tensor([0], device=dev, dtype=torch.int64)
     y = g.render((64, 64), P, seeds, device=dev, dtype=dtype)
-    log.info("Render STRIPES -> shape=%s dtype=%s stats(min=%.4f max=%.4f mean=%.4f)",
-             tuple(y.shape), y.dtype, y.min().item(), y.max().item(), y.mean().item())
+    log.info(
+        "Render STRIPES -> shape=%s dtype=%s stats(min=%.4f max=%.4f mean=%.4f)",
+        tuple(y.shape), y.dtype, y.min().item(), y.max().item(), y.mean().item()
+    )
     assert y.shape == (1, 1, 64, 64)
     assert torch.isfinite(y).all()
 
     # 3) Tiling/Blend path (light)
     grid = TileGridCfg(size=32, overlap=8)
     tb = tile_image(y, grid)
-    tiles = []
-    for _ in range(tb.count):
-        tiles.append(g.render((grid.size, grid.size), P, seeds, device=dev, dtype=dtype)[0])
+    tiles = [g.render((grid.size, grid.size), P, seeds, device=dev, dtype=dtype)[0] for _ in range(tb.count)]
     tiles_t = torch.stack(tiles, dim=0)
     rec = blend(tiles_t, tb, 64, 64)
-    log.info("Blend result -> shape=%s dtype=%s stats(min=%.4f max=%.4f mean=%.4f)",
-             tuple(rec.shape), rec.dtype, rec.min().item(), rec.max().item(), rec.mean().item())
+    log.info(
+        "Blend result -> shape=%s dtype=%s stats(min=%.4f max=%.4f mean=%.4f)",
+        tuple(rec.shape), rec.dtype, rec.min().item(), rec.max().item(), rec.mean().item()
+    )
     assert rec.shape == (1,1,64,64)
 
     # 4) Metrics API
