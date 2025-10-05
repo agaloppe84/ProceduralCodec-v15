@@ -3,6 +3,10 @@ import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
 from ..noise import _hash2, rand01
+from pc15core.rng import to_int64_signed   # ⬅️ AJOUT
+
+# u64 → int64 signé (mêmes bits), réutilisé pour l’XOR
+_GOLDEN64_I = to_int64_signed(0x9E3779B97F4A7C15)   # ⬅️ AJOUT
 
 class VoronoiCells(Generator):
     @property
@@ -10,11 +14,12 @@ class VoronoiCells(Generator):
         return GeneratorInfo(
             name="VORONOI_CELLS",
             param_specs=(
-                ParamSpec("scale", "float", (1.0, 256.0), "cells/img", 1.0),
-                ParamSpec("contrast", "float", (0.5, 2.0), None, 0.1),
+                ParamSpec("scale", "int", (16, 256), "per img", 64.0),
+                ParamSpec("contrast", "float", (0.5, 5.0), None, 1.0),
             ),
             supports_noise=True,
         )
+
     @torch.no_grad()
     def render(self, tiles_hw, params, seeds, *, device, dtype):
         B=params.shape[0]; h,w=tiles_hw
@@ -34,19 +39,19 @@ class VoronoiCells(Generator):
             for ox in (-1,0,1):
                 cx=xi+ox; cy=yi+oy
                 h2=_hash2(cx,cy,seed64)
-                jx=rand01(h2); jy=rand01(h2 ^ torch.tensor(0x9E3779B97F4A7C15, device=device, dtype=torch.int64))
-                px=ox + jx; py=oy + jy
-                dx=xf - px; dy=yf - py
-                d2=dx*dx + dy*dy
-                better = d2 < best_d
-                best_d = torch.where(better, d2, best_d)
-                best_ix = torch.where(better, cx, best_ix)
-                best_iy = torch.where(better, cy, best_iy)
+                jx=rand01(h2)
+                jy=rand01(h2 ^ _GOLDEN64_I)   # ⬅️ remplacé: plus de torch.tensor(...)
 
-        hcell = _hash2(best_ix, best_iy, seed64)
-        val = rand01(hcell)  # [0,1)
-        val = ( (val - 0.5) * c + 0.5 ).clamp(0,1)
-        out = val*2.0 - 1.0
-        return out.unsqueeze(1)
+                dx=(cx.to(dtype)+jx)-fx
+                dy=(cy.to(dtype)+jy)-fy
+                d2=dx*dx + dy*dy
+                mask = d2 < best_d
+                best_d = torch.where(mask, d2, best_d)
+                best_ix = torch.where(mask, cx, best_ix)
+                best_iy = torch.where(mask, cy, best_iy)
+
+        # sortie simple basée sur la distance au site le plus proche
+        out = torch.exp(-c * best_d.sqrt()).unsqueeze(1) * 2.0 - 1.0
+        return out.clamp(-1,1)
 
 GEN = VoronoiCells()
