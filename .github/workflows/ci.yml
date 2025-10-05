@@ -28,3 +28,13 @@ jobs:
         run: |
           export PC15_ALLOW_CPU_TESTS=1
           pytest -q --maxfail=1 --disable-warnings -o log_cli=true -o log_cli_level=INFO
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc15-audit-and-tests
+          path: |
+            artifacts/audit_generators.csv
+            artifacts/audit_generators.json
+            artifacts/pytest-report.xml
