@@ -1,3 +1,5 @@
+[![CI](https://github.com/agaloppe84/ProceduralCodec-v15/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agaloppe84/ProceduralCodec-v15/actions/workflows/ci.yml)
+
 # ProceduralCodec v15 — API (patched)
 
 API **complète et testable** pour le codec procédural par tuiles (v15).
