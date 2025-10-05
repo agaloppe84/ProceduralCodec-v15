@@ -1,7 +1,7 @@
 from __future__ import annotations
 import torch
-from .api import Generator, GeneratorInfo, ParamSpec
-from .utils import grid
+from ..api import Generator, GeneratorInfo, ParamSpec
+from ..utils import grid
 
 class GaborBank(Generator):
     @property
