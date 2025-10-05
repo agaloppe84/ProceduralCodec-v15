@@ -1,0 +1,30 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r configs/requirements.dev.txt
+
+      - name: Install PyTorch (CPU wheels)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
+
+      - name: Install packages (editable)
+        run: |
+          pip install -e packages/pc15core -e packages/pc15proc -e packages/pc15codec -e packages/pc15vq -e packages/pc15metrics -e packages/pc15data -e packages/pc15viz -e packages/pc15wf
+
+      - name: Test
+        run: |
+          export PC15_ALLOW_CPU_TESTS=1
+          pytest -q --maxfail=1 --disable-warnings
