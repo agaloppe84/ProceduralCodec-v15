@@ -2,7 +2,7 @@ from __future__ import annotations
 import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
-from .noise import value_noise2d
+from ..noise import value_noise2d
 class ValueNoise(Generator):
     @property
     def info(self)->GeneratorInfo:

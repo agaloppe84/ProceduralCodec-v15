@@ -2,7 +2,7 @@ from __future__ import annotations
 import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
-from .noise import perlin2d
+from ..noise import perlin2d
 
 class FBMRidged(Generator):
     @property

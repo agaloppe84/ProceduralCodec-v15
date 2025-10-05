@@ -2,7 +2,7 @@ from __future__ import annotations
 import torch
 from ..api import Generator, GeneratorInfo, ParamSpec
 from ..utils import grid
-from .noise import _hash2, rand01
+from ..noise import _hash2, rand01
 
 class Starfield(Generator):
     @property
