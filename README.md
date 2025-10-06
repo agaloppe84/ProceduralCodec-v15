@@ -11,6 +11,8 @@ L’encodage sélectionne, **tuile par tuile** (GPU), le meilleur couple *(gén�
 
 ---
 
+[**📚 Documentation en ligne**](https://agaloppe84.github.io/ProceduralCodec-v15/)
+
 ## Sommaire
 
 - [Installation rapide (utilisateur)](#installation-rapide-utilisateur)

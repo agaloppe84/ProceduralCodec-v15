@@ -1,0 +1,38 @@
+site_name: ProceduralCodec v15
+site_url: https://agaloppe84.github.io/ProceduralCodec-v15/
+repo_url: https://github.com/agaloppe84/ProceduralCodec-v15
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+    handlers:
+      python:
+        options:
+          docstring_style: google # ou numpy
+          show_if_no_docstring: true
+          separate_signature: true
+          filters:
+            - "!^_" # masquer symboles privés
+
+nav:
+  - Accueil: index.md
+  - API:
+    - pc15codec: api/pc15codec.md
+    - pc15proc: api/pc15proc.md
+    - pc15metrics: api/pc15metrics.md
+    - pc15data: api/pc15data.md
+    - pc15viz: api/pc15viz.md
+    - pc15wf: api/pc15wf.md
