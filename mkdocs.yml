@@ -17,13 +17,7 @@ markdown_extensions:
 
 plugins:
   - search
-  - mkdocstrings:
-      handlers:
-        python:
-          rendering:
-            show_if_no_docstring: true
-            separate_signature: true
-
+  - mkdocstrings
 
 nav:
   - Accueil: index.md
