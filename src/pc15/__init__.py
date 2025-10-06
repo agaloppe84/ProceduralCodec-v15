@@ -14,7 +14,7 @@ Or detailed modules:
     from pc15 import codec, proc, metrics, data, viz, wf
 """
 
-__version__ = "15.0.0"
+__version__ = "15.0.4"
 
 # Bring subpackages into a single namespace
 # These imports assume the existing monorepo layout under packages/*/src

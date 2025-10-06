@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pc15"
-version = "15.0.3"
+version = "15.0.4"
 description = "PC15 — whole procedural codec stack (codec, proc, metrics, data, viz, wf)"
 readme = "README.md"
 requires-python = ">=3.9"
