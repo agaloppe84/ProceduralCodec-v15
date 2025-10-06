@@ -288,3 +288,182 @@ enc = encode_y(img_y, cfg)
 
   * `tools/pc15learn/make_tiles_jsonl.py` (extraction tuiles/labels).
   * `pc15core/ai.py` : classes `AiHooks`, `Selector`, `ParamPredictor`, `RdPredictor` (stubs no-op si poids absents).
+
+
+Parfait — voilà **les 2 blocs prêts à coller** dans ton README.
+
+---
+
+# Bloc README — Colab Quickstart (API + Drive + Hooks)
+
+```python
+#@title PC15 — Colab Quickstart (API + Drive + Hooks)
+REPO = "agaloppe84/ProceduralCodec-v15"  # branche/tag via TAG
+TAG  = "main"                            # ex: "v15.0.4" pour une release
+
+import sys, subprocess, os, pathlib, time, json, math
+PY = sys.executable
+def sh(*args): print("➜", " ".join(map(str,args))); subprocess.run(list(args), check=True)
+
+# 1) Dépendances minimales (+ numpy pin Colab)
+sh(PY, "-m", "pip", "install", "-q",
+   "numpy>=1.26,<2.0", "Pillow>=10.0", "tqdm>=4.66", "matplotlib>=3.7")
+
+# 2) Installer PC15 (monopackage avec sous-modules intégrés)
+sh(PY, "-m", "pip", "install", "-q", f"git+https://github.com/{REPO}@{TAG}")
+
+# 3) Monter Google Drive (on n’utilise QUE Drive ici)
+from google.colab import drive
+drive.mount("/content/drive", force_remount=True)
+
+# 4) Config des chemins (tout passe par PathsConfig)
+import pc15 as pc
+print("pc15 version:", getattr(pc, "__version__", "unknown"))
+
+DATASET_IMAGES = "/content/drive/MyDrive/procedural_datasets/pc_synth_v1_plus/images"  # <-- ton dataset (2000 photos)
+BASE_DIR       = "/content/drive/MyDrive/pc15"                                         # répertoire racine PC15 (artifacts, cache…)
+
+paths = pc.PathsConfig(
+    base=BASE_DIR,
+    dataset_images=DATASET_IMAGES,     # images d'entraînement/étiquetage
+    artifacts_subdir="artifacts",      # ex: /content/drive/MyDrive/pc15/artifacts
+    cache_subdir=".cache",             # ex: /content/drive/MyDrive/pc15/.cache
+    labels_dir=None,                   # (optionnel) ex: "/content/drive/MyDrive/pc15/labels"
+)
+print("ENV:", pc.env_summary())
+
+# 5) Smoke encode/decode (Y) + comparaison Hooks heuristiques vs baseline
+import numpy as np
+def _to_tensor(a):
+    import torch
+    return torch.as_tensor(a, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+
+H=W=256
+grad = np.linspace(0,1,W, dtype=np.float32)[None,:].repeat(H,axis=0)*0.8+0.1
+yy   = _to_tensor(grad)
+
+cfg = pc.CodecConfig(tile=256, overlap=24, lambda_rd=0.015, alpha_mix=0.7, seed=1234)
+
+t0=time.perf_counter(); enc0 = pc.encode_y(yy, cfg); t_enc0=(time.perf_counter()-t0)*1000
+t1=time.perf_counter(); recon= pc.decode_y(enc0["bitstream"], device="cpu"); t_dec=(time.perf_counter()-t1)*1000
+
+# Hooks non-réseau de neurones (ex: top-K heuristique)
+hooks = pc.HeuristicHooks(topk=8)
+t2=time.perf_counter(); enc1 = pc.encode_y_with_hooks(yy, cfg, hooks=hooks); t_enc1=(time.perf_counter()-t2)*1000
+
+# PSNR/SSIM (fallback NumPy si pc15.metrics indispo)
+def _as_np(x):
+    import torch
+    return x.detach().cpu().float().squeeze().numpy() if isinstance(x, torch.Tensor) else np.asarray(x, np.float32)
+
+try:
+    PSNR = float(pc.psnr(yy, recon).item()); SSIM=float(pc.ssim(yy, recon).item())
+except Exception:
+    a=_as_np(yy); b=_as_np(recon)
+    mse=float(np.mean((a-b)**2)); PSNR=20*math.log10(1.0)-10*math.log10(max(mse,1e-8))
+    SSIM=max(0.0, 1.0-mse/(float(np.mean(a**2))+1e-8))
+
+print(f"Baseline encode: {t_enc0:.1f} ms  | bytes={len(enc0['bitstream'])}")
+print(f"Hooks encode   : {t_enc1:.1f} ms  | bytes={len(enc1['bitstream'])}")
+print(f"Decode         : {t_dec:.1f} ms   | PSNR={PSNR:.2f} dB  SSIM={SSIM:.4f}")
+
+# 6) Écriture d’artefacts sur Drive
+LOG_DIR = pathlib.Path(paths.base)/"artifacts"; LOG_DIR.mkdir(parents=True, exist_ok=True)
+HTML = LOG_DIR/"pc15_report.html"
+HTML.write_text(
+    f"<html><body><h1>PC15 Colab</h1>"
+    f"<p>pc15={getattr(pc,'__version__','?')}</p>"
+    f"<p>Baseline bytes={len(enc0['bitstream'])} | Hooks bytes={len(enc1['bitstream'])}</p>"
+    f"<p>Encode0={t_enc0:.1f} ms | Encode1={t_enc1:.1f} ms | Decode={t_dec:.1f} ms</p>"
+    f"<p>PSNR={PSNR:.2f} dB | SSIM={SSIM:.4f}</p></body></html>", encoding="utf-8"
+)
+print("Saved:", HTML)
+```
+
+---
+
+# Bloc README — Arborescence standard pour tout **nouvel outil** intégré
+
+> Règle d’or : **jamais de code d’outil à la racine**.
+> Chaque outil vit dans **`packages/pc15<outil>/src/pc15<outil>/...`** et le *namespace agrégateur* `pc15` ré-exporte ce qu’il faut.
+
+```
+# Racine du repo
+.
+├─ pyproject.toml                 # unique (build setuptools) — liste les src des sous-packages
+├─ src/
+│  └─ pc15/
+│     ├─ __init__.py              # agrégateur : importe/alias les sous-packages et ré-exporte l'API
+│     └─ ...                      # (facultatif) petites façades communes
+├─ packages/
+│  ├─ pc15codec/                  # existant
+│  │  └─ src/pc15codec/...
+│  ├─ pc15proc/                   # existant
+│  │  └─ src/pc15proc/...
+│  ├─ pc15metrics/                # existant
+│  │  └─ src/pc15metrics/...
+│  ├─ pc15data/                   # existant
+│  │  └─ src/pc15data/...
+│  ├─ pc15viz/                    # existant
+│  │  └─ src/pc15viz/...
+│  ├─ pc15wf/                     # existant
+│  │  └─ src/pc15wf/...
+│  ├─ pc15vq/                     # existant
+│  │  └─ src/pc15vq/...
+│  └─ pc15learn/                  # **exemple d’outil intégré** (ex-tools)
+│     └─ src/
+│        └─ pc15learn/
+│           ├─ __init__.py        # expose l’API de l’outil (ex: HeuristicHooks, PathsConfig, make_labels, …)
+│           ├─ paths.py           # gestion des chemins paramétriques (Colab/Drive/locaux)
+│           ├─ ai_hooks.py        # hooks heuristiques + encode_y_with_hooks(...)
+│           └─ make_labels.py     # CLI/func d’extraction de tuiles/labels (v15.1+)
+├─ tests/
+│  ├─ test_api_contracts.py
+│  ├─ test_pc15learn_hooks.py     # tests du nouvel outil (import via `from pc15.learn import ...`)
+│  └─ test_pc15learn_labels.py
+└─ ...
+```
+
+**Checklist d’intégration d’un nouvel outil `pc15<outil>` :**
+
+1. **Dossier** : `packages/pc15<outil>/src/pc15<outil>/...` (pas de code outil ailleurs).
+
+2. **`pyproject.toml`** (racine) → ajouter le chemin dans :
+
+   ```toml
+   [tool.setuptools.packages.find]
+   where = [
+     "src",
+     "packages/pc15core/src", "packages/pc15proc/src", "packages/pc15codec/src",
+     "packages/pc15vq/src", "packages/pc15metrics/src", "packages/pc15data/src",
+     "packages/pc15viz/src", "packages/pc15wf/src",
+     "packages/pc15learn/src"        # <-- ajouter votre nouvel outil ici
+   ]
+   ```
+
+   *(Remplace `pc15learn` par `pc15<outil>` pour le prochain outil.)*
+
+3. **Agrégateur `src/pc15/__init__.py`** → alias propre :
+
+   ```python
+   # Exemple pour un outil 'pc15learn'
+   try:
+       import pc15learn as learn
+       from pc15learn import HeuristicHooks, PathsConfig, encode_y_with_hooks, env_summary, make_labels
+   except Exception:
+       learn = None
+       HeuristicHooks = PathsConfig = encode_y_with_hooks = env_summary = make_labels = None  # type: ignore
+
+   __all__ += [
+       "learn", "HeuristicHooks", "PathsConfig", "encode_y_with_hooks", "env_summary", "make_labels"
+   ]
+   ```
+
+   *Même pattern pour tout `pc15<outil>` futur (ex: `pc15train`, `pc15serve`, …).*
+
+4. **Tests** : placer les tests à la racine `tests/` et importer via **`from pc15.<alias> import ...`**
+   (on ne référence jamais `packages/...` directement dans les tests).
+
+5. **Docs** : documenter l’API dans le README principal (sections *Quickstart/Colab* et *Arborescence*).
+
+C’est tout — avec ça, **un seul `pip install pc15`** expose l’outil **et** l’agrégateur `pc15` ré-exporte l’API utile.
