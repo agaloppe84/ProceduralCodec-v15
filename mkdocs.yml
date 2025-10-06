@@ -18,14 +18,17 @@ markdown_extensions:
 plugins:
   - search
   - mkdocstrings:
-    handlers:
-      python:
-        options:
-          docstring_style: google # ou numpy
-          show_if_no_docstring: true
-          separate_signature: true
-          filters:
-            - "!^_" # masquer symboles privés
+      handlers:
+        python:
+          # (optionnel) chemins supplémentaires où chercher le code
+          # paths: [ "." ]
+          selection:
+            filters:
+              - "!^_"            # masque les membres privés
+          rendering:
+            show_if_no_docstring: true
+            separate_signature: true
+
 
 nav:
   - Accueil: index.md
