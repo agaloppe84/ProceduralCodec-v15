@@ -481,13 +481,159 @@ C’est tout — avec ça, **un seul `pip install pc15`** expose l’outil **et*
 - **Chemins paramétriques** (`PathsConfig`) + `outputs_path`/`artifacts_path`. <!-- [STORE:OVERWRITE]/[STORE:CUMULATIVE] -->
 - **Tests** OK : public_api, header_crc, seed_policy, rans_tables (+ *futureproof* skips).
 
+Parfait — voilà le **bloc README Step 1** mis à jour, incluant les derniers correctifs (indices sans overshoot + crop au bord), les fenêtres **Hann/Tukey/Kaiser**, et le **seam penalty**. Tu peux **copier/coller** tel quel dans ton `README.md`.
+
+---
+
 ## Step 1 — Tiling & Blend + Tile Records (v15)
 
-- **Tiling** (`pc15codec.tiling`):
-  - `TileGridCfg(size=256, overlap=24)`
-  - `tile_image(y, grid) -> TileBatchSpec` (grille + positions)
-  - `blend(tiles, spec, H, W)` — fenêtre **Hann** sur les overlaps, accumulation normalisée
-- **Tile Records** (`pc15codec.bitstream.TileRec`) :
-  - `tile_id, gen_id, qv_id, seed, rec_flags, payload_fmt, payload`
-  - `to_dict()` / `from_dict()` (pas d’encodage rANS encore)
-- **Tests** : `test_step1_tiling_blend_shapes.py`, `test_step1_tilerec_roundtrip.py`
+### TL;DR
+
+* **Tiling** paramétrique (grille robuste, **sans overshoot**).
+* **Blend** par *partition of unity* (normalisation par somme des poids) avec fenêtres **Hann** *(défaut)*, **Tukey** *(recommandée)*, **Kaiser**.
+* **Crop automatique** au bord pour les tuiles partielles (pas d’erreur de taille).
+* **Seam penalty mask** pour pénaliser légèrement les coutures dans le score RD.
+* **TileRec** (format d’enregistrement de tuile, sans rANS pour l’instant).
+
+---
+
+### API (import)
+
+```python
+from pc15codec.tiling import TileGridCfg, tile_image, blend, seam_penalty_mask
+from pc15codec.bitstream import TileRec
+```
+
+---
+
+### Tiling (grille)
+
+```python
+grid = TileGridCfg(size=256, overlap=24)    # vérifs intégrées : size>0 et 0<=overlap<size
+spec = tile_image(y, grid)                  # y: Tensor[1,1,H,W]
+# spec: TileBatchSpec(H, W, size, overlap, ny, nx, starts) + .count
+```
+
+**Invariants & garanties**
+
+* Les positions de départ sont **monotones** et **ne dépassent jamais** `L - size`.
+* La dernière tuile est **forcée** à `L - size` pour couvrir le bord.
+* `spec.starts` est de longueur `spec.count = spec.ny * spec.nx`.
+
+---
+
+### Blend (partition of unity)
+
+```python
+y_hat = blend(
+    tiles, spec, H, W,                 # tiles: Tensor[N,1,size,size], N == spec.count
+    window="hann",                     # "hann" (défaut) | "tukey" | "kaiser"
+    window_params=None                 # {'alpha':...} pour tukey, {'beta':...} pour kaiser
+)
+```
+
+**Comportement**
+
+* Accumulation pondérée `sum(tiles * w)` puis **normalisation** par `sum(w)` pixel-par-pixel.
+* **Crop automatique** de la fenêtre et de la tuile quand une tuile touche le bord (aucune exception sur les tailles).
+* Fenêtres 2D **séparables** (wy⊗wx) pour robustesse et perf.
+
+**Fenêtres**
+
+* **Hann** *(défaut)* : simple, fiable.
+* **Tukey** *(recommandée prod)* : plateau central + bords lissés.
+
+  * `alpha` **auto** ≈ `2 * overlap / size` (borné à [0,1]).
+  * Exemple : `blend(..., window="tukey")` ou `blend(..., window="tukey", window_params={"alpha":0.5})`.
+* **Kaiser** : bords plus “raides” (textures très structurées).
+
+  * `beta` typique `6.5–8.0`.
+  * Exemple : `blend(..., window="kaiser", window_params={"beta":6.5})`.
+
+---
+
+### Seam penalty (RD)
+
+```python
+m = seam_penalty_mask(size=grid.size, overlap=grid.overlap, power=1.5)  # Tensor[size,size] ∈ [0,1]
+# Exemple d’intégration dans le score RD :
+# D_base = α·(1-SSIM) + (1-α)·MSE_norm
+# D = (1 + γ·m) * D_base    # γ ≈ 0.25…0.5 selon la sensibilité aux coutures
+```
+
+* `m≈0` au centre, `→1` vers les bords ; `power>1` accentue la pénalité près des edges.
+* **But** : éviter que la recherche sélectionne des candidats “bons au centre mais mauvais sur les coutures”.
+
+> 💬 **Commentaire stockage/IA** : ce masque est **calculé à la volée** (pas de stockage). La pondération RD ne stocke rien non plus. *(Aucun artefact IA/entrainement ici.)*
+
+---
+
+### Tile records (bitstream)
+
+```python
+rec = TileRec(tile_id=0, gen_id=7, qv_id=3, seed=42,
+              rec_flags=0, payload_fmt=0, payload=b"")   # pas de rANS encore
+d = rec.to_dict(); rec2 = TileRec.from_dict(d)           # round-trip dict
+```
+
+* **Objectif Step 1** : typer la structure de record par tuile.
+* **Pas de sérialisation rANS** encore (payload permissif, éventuellement vide).
+* **Stockage** : quand on activera rANS, ce sera un bloc **[STORE:OVERWRITE]** packé dans le bitstream. Ici, rien n’est écrit.
+
+---
+
+### Exemples
+
+**Hann (défaut)**
+
+```python
+H, W = 512, 512
+y     = torch.zeros((1,1,H,W), device=dev, dtype=dtype)
+grid  = TileGridCfg(size=128, overlap=16)
+spec  = tile_image(y, grid)
+tiles = torch.rand((spec.count, 1, grid.size, grid.size), device=dev, dtype=dtype)
+
+y_hat = blend(tiles, spec, H, W)   # partition of unity, crop auto au bord
+```
+
+**Tukey (prod)**
+
+```python
+y_hat = blend(tiles, spec, H, W, window="tukey")  # alpha auto en fonction overlap/size
+```
+
+**Kaiser**
+
+```python
+y_hat = blend(tiles, spec, H, W, window="kaiser", window_params={"beta": 6.5})
+```
+
+---
+
+### Edge cases & perfs
+
+* **Bords** : pas de mismatch — crop appliqué sur (tuile, fenêtre) au besoin.
+* **CPU/GPU** : supportés ; `float16` en CUDA, `float32` en CPU.
+* **Stride** = `size - overlap` (implémenté via indices monotones).
+* **Aucun I/O** ici (pas de disque), tout est in-mem.
+
+---
+
+### Tests (CI)
+
+* ✅ `test_step1_tiling_blend_shapes.py` — formes, finitude, dynamique [0..1].
+* ✅ `test_step1_tilerec_roundtrip.py` — round-trip dict `TileRec`.
+* ✅ `test_api_contracts.py` — micro-pipeline STRIPES + tiling/blend.
+* 🔜 Tests rANS/payload restent **skipped** jusqu’au Step 2.
+
+> Pour forcer les tests CPU : `PC15_ALLOW_CPU_TESTS=1` (déjà dans le workflow).
+> **PyTorch CPU 2.3.1** OK ; `kaiser_window` dispose d’un fallback interne si absent.
+
+---
+
+### Roadmap (prochain bloc)
+
+* **Step 2 — Bitstream records** : sérialisation multi-tuiles, payload rANS (tables gelées v15 + override), read/write des records avec CRC, invariants + tests round-trip.
+* **Step 3 — Recherche RD** : boucle coarse→fine + seam penalty intégrée, beam K (optionnel), early-exit, métriques PSNR/SSIM mixées.
+
+---
