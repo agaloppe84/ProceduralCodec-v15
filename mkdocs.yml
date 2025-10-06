@@ -18,16 +18,16 @@ markdown_extensions:
 plugins:
   - search
   - mkdocstrings:
-    handlers:
-      python:
-        paths: ['.']
+      handlers:
+        python:
+          paths: ['.']
 
 nav:
   - Accueil: index.md
   - API:
-    - pc15codec: api/pc15codec.md
-    - pc15proc: api/pc15proc.md
-    - pc15metrics: api/pc15metrics.md
-    - pc15data: api/pc15data.md
-    - pc15viz: api/pc15viz.md
-    - pc15wf: api/pc15wf.md
+      - pc15codec: api/pc15codec.md
+      - pc15proc: api/pc15proc.md
+      - pc15metrics: api/pc15metrics.md
+      - pc15data: api/pc15data.md
+      - pc15viz: api/pc15viz.md
+      - pc15wf: api/pc15wf.md
