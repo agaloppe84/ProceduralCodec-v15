@@ -20,7 +20,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: ['src']
+          paths: ['.']
 
 nav:
   - Accueil: index.md
