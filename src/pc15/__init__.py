@@ -56,9 +56,9 @@ except Exception:
 if codec is not None:
     # Import explicit depuis les sous-modules (plus robuste)
     try:
-        from pc15codec.codec import encode_y, decode_y
+        from pc15codec.codec import encode_y, decode_y, CodecConfig
     except Exception:
-        encode_y = decode_y = None  # type: ignore
+        encode_y = decode_y = CodecConfig = None  # type: ignore
     try:
         from pc15codec.rans import rans_encode, rans_decode, build_rans_tables
     except Exception:
@@ -118,7 +118,7 @@ __all__ = [
     # sub-namespaces
     "codec", "proc", "metrics", "data", "viz", "wf", "vq", "core",
     # convenience
-    "encode_y", "decode_y", "rans_encode", "rans_decode", "build_rans_tables",
+    "encode_y", "decode_y", "CodecConfig", "rans_encode", "rans_decode", "build_rans_tables",
     "read_bitstream", "write_bitstream", "score_rd_numpy",
     "list_generators", "render",
     "psnr", "ssim",
