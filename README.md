@@ -1,4 +1,3 @@
-````markdown
 [![CI](https://github.com/agaloppe84/ProceduralCodec-v15/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agaloppe84/ProceduralCodec-v15/actions/workflows/ci.yml)
 
 # ProceduralCodec v15 — Codec procédural par tuiles (PC15)
@@ -289,7 +288,3 @@ enc = encode_y(img_y, cfg)
 
   * `tools/pc15learn/make_tiles_jsonl.py` (extraction tuiles/labels).
   * `pc15core/ai.py` : classes `AiHooks`, `Selector`, `ParamPredictor`, `RdPredictor` (stubs no-op si poids absents).
-
-```
-::contentReference[oaicite:0]{index=0}
-```
