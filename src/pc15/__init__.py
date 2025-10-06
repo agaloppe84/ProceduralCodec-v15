@@ -1,4 +1,4 @@
-"""PC15 — unified API (v15)
+"""PC15 - unified API (v15)
 Install once, import one namespace:
 
     pip install "git+https://github.com/agaloppe84/ProceduralCodec-v15@v15.0.0"

@@ -469,3 +469,16 @@ print("Saved:", HTML)
 5. **Docs** : documenter l’API dans le README principal (sections *Quickstart/Colab* et *Arborescence*).
 
 C’est tout — avec ça, **un seul `pip install pc15`** expose l’outil **et** l’agrégateur `pc15` ré-exporte l’API utile.
+
+
+## Step 0 — Pré-flight & gels (v15)
+
+- **CodecConfig** unique (tile/overlap/λ/α/rans_id) — `from pc15codec.config import CodecConfig`.
+- **Tables rANS gelées** packagées sous `pc15codec.data.rans` + override via `PC15_MODELS_DIR/rans/<id>.json`.  <!-- [ML] -->
+- **Header v15 + CRC32** (helpers `pack_v15`/`unpack_v15`).
+- **Seed policy** déterministe (`pc15codec.seed.tile_seed`) — idempotence stricte.
+- **Bitstreams I/O** atomique (`read_bitstream` / `write_bitstream`).  <!-- [STORE:OVERWRITE] -->
+- **Chemins paramétriques** (`PathsConfig`) + helpers `outputs_path`/`artifacts_path`.  <!-- [STORE:OVERWRITE] / [STORE:CUMULATIVE] -->
+- **Tests** : `test_public_api.py`, `test_header_crc.py`, `test_seed_policy.py`, `test_rans_tables.py`.
+
+> L’API publique reste `pc15` (façade unifiée) ; les sous-packages `packages/*` sont tolérés manquants à l’import.
