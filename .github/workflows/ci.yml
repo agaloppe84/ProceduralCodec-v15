@@ -9,7 +9,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.11'  # tu peux garder 3.11 ici si ça passe
 
       - name: Install deps
         run: |
@@ -20,9 +20,32 @@ jobs:
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
 
-      - name: Install packages (editable)
+      # 1) Sous-packages monorepo (editable)
+      - name: Install monorepo packages (editable)
         run: |
-          pip install -e packages/pc15core -e packages/pc15proc -e packages/pc15codec -e packages/pc15vq -e packages/pc15metrics -e packages/pc15data -e packages/pc15viz -e packages/pc15wf
+          pip install -e packages/pc15core \
+                      -e packages/pc15proc \
+                      -e packages/pc15codec \
+                      -e packages/pc15vq \
+                      -e packages/pc15metrics \
+                      -e packages/pc15data \
+                      -e packages/pc15viz \
+                      -e packages/pc15wf
+          # pip install -e packages/pc15learn  # si présent
+
+      # 2) Façade pc15 (editable) — IMPORTANT
+      - name: Install pc15 facade (editable)
+        run: pip install -e .
+
+      # (Optionnel) petit smoke check rassurant
+      - name: Smoke check imports
+        run: |
+          python - <<'PY'
+          import pc15, pc15codec, pc15proc
+          print("pc15 ok:", getattr(pc15, "__version__", "n/a"))
+          print("pc15codec ok:", getattr(pc15codec, "__version__", "editable"))
+          print("façade encode_y symbol:", hasattr(pc15, "encode_y"))
+          PY
 
       - name: Test
         run: |
