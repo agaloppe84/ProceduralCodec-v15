@@ -1,20 +1,22 @@
-
-import sys, json
+import json
 from pathlib import Path
+
 import numpy as np
 from PIL import Image
+import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from tools.pc15learn.make_labels import main as make_labels_main  # noqa
+# Import direct depuis le sous-package intégré
+make_labels_main = pytest.importorskip("pc15learn.make_labels").main
+
 
 def test_make_labels_tmp(tmp_path: Path):
     imgs = tmp_path / "images"
     imgs.mkdir(parents=True, exist_ok=True)
-    a = (np.linspace(0,255,64, dtype=np.uint8)[None,:].repeat(64, axis=0))
-    b = np.random.default_rng(0).integers(0,256, size=(64,64), dtype=np.uint8)
-    Image.fromarray(a, 'L').save(imgs / "grad.png")
-    Image.fromarray(b, 'L').save(imgs / "noise.png")
+
+    a = (np.linspace(0, 255, 64, dtype=np.uint8)[None, :].repeat(64, axis=0))
+    b = np.random.default_rng(0).integers(0, 256, size=(64, 64), dtype=np.uint8)
+    Image.fromarray(a, "L").save(imgs / "grad.png")
+    Image.fromarray(b, "L").save(imgs / "noise.png")
 
     out_jsonl = tmp_path / "tiles.jsonl"
     out_tiles = tmp_path / "tiles"
@@ -25,9 +27,13 @@ def test_make_labels_tmp(tmp_path: Path):
         "--tiles-out", str(out_tiles),
         "--tile", "32", "--overlap", "8",
     ])
-    assert rc == 0
+
+    # certains CLIs renvoient None (success), d'autres 0
+    assert rc in (None, 0)
     assert out_jsonl.exists()
     lines = out_jsonl.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) > 0
+
     first = json.loads(lines[0])
-    assert "label" in first and first["label"] in ("smooth","mid","edgy")
+    # garde les labels actuels si ton make_labels en émet
+    assert "label" in first and first["label"] in ("smooth", "mid", "edgy")

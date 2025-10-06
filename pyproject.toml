@@ -22,7 +22,7 @@ dependencies = [
 # Include aggregator src plus each subpackage source dir
 where = ["src", "packages/pc15core/src", "packages/pc15proc/src", "packages/pc15codec/src",
          "packages/pc15vq/src", "packages/pc15metrics/src", "packages/pc15data/src",
-         "packages/pc15viz/src", "packages/pc15wf/src"]
+         "packages/pc15viz/src", "packages/pc15wf/src", "packages/pc15learn/src"]
 
 [tool.setuptools]
 include-package-data = true

@@ -114,9 +114,21 @@ if wf is not None:
 else:
     pc15_name = atomic_write = load_manifest = save_manifest = log_append = None  # type: ignore
 
+try:
+    import pc15learn as learn
+except Exception:
+    learn = None
+
+# Re-exports facultatifs
+if learn is not None:
+    try:
+        from pc15learn import PathsConfig, env_summary, HeuristicHooks, encode_y_with_hooks
+    except Exception:
+        PathsConfig = env_summary = HeuristicHooks = encode_y_with_hooks = None  # type: ignore
+
 __all__ = [
     # sub-namespaces
-    "codec", "proc", "metrics", "data", "viz", "wf", "vq", "core",
+    "codec", "proc", "metrics", "data", "viz", "wf", "vq", "core", "learn",
     # convenience
     "encode_y", "decode_y", "CodecConfig", "rans_encode", "rans_decode", "build_rans_tables",
     "read_bitstream", "write_bitstream", "score_rd_numpy",
@@ -125,5 +137,7 @@ __all__ = [
     "scan_images", "to_luma_tensor", "build_manifest", "ensure_symlink",
     "montage", "plot_rd", "preview_tile_vs_synth",
     "pc15_name", "atomic_write", "load_manifest", "save_manifest", "log_append",
+    # learn helpers (optionnel)
+    "PathsConfig","env_summary","HeuristicHooks","encode_y_with_hooks",
     "__version__",
 ]
