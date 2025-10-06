@@ -1,15 +1,27 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, Sequence, Union
-import numpy as np
+from typing import List, Tuple, Optional
 import torch
 from pc15metrics.psnr_ssim import ssim
 
 
+# -----------------------------------------------------------------------------
+# Config & sorties
+# -----------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class SearchCfg:
+    """
+    Configuration de scoring RD.
+
+    - lambda_rd : poids du terme "bits" (R) dans RD = D + lambda_rd * R
+    - metric    : "ssim" (par défaut), "mse", ou "mixed" (pondère SSIM/MSE via alpha)
+    - alpha     : poids de SSIM dans le mode "mixed" (D = alpha*(1-ssim) + (1-alpha)*MSE)
+    - beam_k    : réservé pour beam-search (non utilisé ici)
+    - early_exit_tau : seuil d'early exit (non utilisé ici)
+    """
     lambda_rd: float = 0.02
-    metric: str = "ssim"   # "ssim" | "mse" (ou autre futur)
+    metric: str = "ssim"  # "ssim" | "mse" | "mixed"
     alpha: float = 0.7
     beam_k: int = 0
     early_exit_tau: float | None = 0.02
@@ -17,13 +29,25 @@ class SearchCfg:
 
 @dataclass
 class ScoreOut:
-    D: torch.Tensor    # (B,)
-    R: torch.Tensor    # (B,)
-    RD: torch.Tensor   # (B,)
+    """Paquet résultat du score batch."""
+    D: torch.Tensor   # (B,)
+    R: torch.Tensor   # (B,)  -- proxy bits (placeholder = 1.0)
+    RD: torch.Tensor  # (B,)
 
 
-def make_border_mask(h: int, w: int, width: int = 8, device=None, dtype=None):
+# -----------------------------------------------------------------------------
+# Masque de bord (pénalité couture)
+# -----------------------------------------------------------------------------
+
+def make_border_mask(h: int, w: int, width: int = 8, device=None, dtype=None) -> torch.Tensor:
+    """
+    Crée un masque binaire (1 sur les bords, 0 ailleurs), shape (1,1,H,W).
+    width=0 → masque nul (aucun bord).
+    """
     y = torch.zeros((1, 1, h, w), device=device, dtype=dtype)
+    if width <= 0:
+        return y
+    width = int(width)
     y[..., :width, :] = 1
     y[..., -width:, :] = 1
     y[..., :, :width] = 1
@@ -31,121 +55,137 @@ def make_border_mask(h: int, w: int, width: int = 8, device=None, dtype=None):
     return y
 
 
+# -----------------------------------------------------------------------------
+# Scoring RD
+# -----------------------------------------------------------------------------
+
 def score_batch(
     y_tile: torch.Tensor,
     synth: torch.Tensor,
     cfg: SearchCfg,
     seam_weight: float = 0.0,
-    border_mask: torch.Tensor | None = None,
+    border_mask: Optional[torch.Tensor] = None,
 ) -> ScoreOut:
     """
-    Score RD basique sur un batch de synthèses.
-    - D = 1-SSIM (ou MSE) [+ pénalité couture optionnelle]
-    - R = 1.0 (constante)  → utile quand on ne dispose pas encore d'une estimation des bits
-    - RD = D + λ·R
+    Calcule D, R, RD pour un batch de synthèses 'synth' (B,1,H,W) vs la tuile 'y_tile' (1,1,H,W).
+
+    - D:
+        * "ssim"  → 1 - SSIM(y, ŷ)
+        * "mse"   → mean((y - ŷ)^2)
+        * "mixed" → alpha*(1-SSIM) + (1-alpha)*MSE   (alpha dans cfg)
+    - Pénalité couture: si seam_weight>0, ajoute seam_weight * MSE sur la zone de bord (border_mask).
+      Si border_mask=None, il est généré automatiquement (width=8).
+    - R: proxy bits (placeholder = 1.0 pour S1, donc constante)
+    - RD: D + lambda_rd * R
     """
+    assert y_tile.ndim == 4 and y_tile.shape[0] == 1 and y_tile.shape[1] == 1, "y_tile doit être (1,1,H,W)"
+    assert synth.ndim == 4 and synth.shape[1] == 1, "synth doit être (B,1,H,W)"
+    assert y_tile.shape[-2:] == synth.shape[-2:], "H,W doivent matcher"
+
     B = synth.shape[0]
     yB = y_tile.expand(B, -1, -1, -1)
 
+    # Distorsion principale
     if cfg.metric == "ssim":
-        D = 1.0 - ssim(yB, synth)
-    else:
+        D = 1.0 - ssim(yB, synth)  # (B,)
+    elif cfg.metric == "mse":
         D = torch.mean((yB - synth) ** 2, dim=(1, 2, 3))
+    elif cfg.metric == "mixed":
+        d_ssim = 1.0 - ssim(yB, synth)
+        d_mse = torch.mean((yB - synth) ** 2, dim=(1, 2, 3))
+        a = float(cfg.alpha)
+        D = a * d_ssim + (1.0 - a) * d_mse
+    else:
+        raise ValueError(f"Unknown metric: {cfg.metric}")
 
+    # Pénalité couture
     if seam_weight > 0.0:
         if border_mask is None:
             h, w = y_tile.shape[-2:]
             border_mask = make_border_mask(h, w, width=8, device=y_tile.device, dtype=y_tile.dtype)
+        # Assurer même device/dtype
+        if border_mask.device != y_tile.device:
+            border_mask = border_mask.to(y_tile.device)
+        if border_mask.dtype != y_tile.dtype:
+            border_mask = border_mask.to(dtype=y_tile.dtype)
         seam = torch.mean(((yB - synth) ** 2) * border_mask, dim=(1, 2, 3))
-        D = D + seam_weight * seam
+        D = D + float(seam_weight) * seam
 
-    R = torch.full_like(D, 1.0)
-    RD = D + cfg.lambda_rd * R
+    # Proxy bits (placeholder constant pour S1)
+    R = torch.ones_like(D)
+
+    RD = D + float(cfg.lambda_rd) * R
     return ScoreOut(D=D, R=R, RD=RD)
 
 
-# ---------------------------------------------------------------------------
-# Extensions : bits estimés + helper CPU-friendly (numpy)
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Coarse-to-fine helpers (math-only, génériques)
+# -----------------------------------------------------------------------------
 
-def _as_batched_bits(bits: Union[float, Sequence[float], torch.Tensor],
-                     B: int, device=None, dtype=None) -> torch.Tensor:
-    """Normalise une estimation de bits (scalaire/liste/tensor) en tensor (B,)."""
-    if isinstance(bits, torch.Tensor):
-        if bits.numel() == 1:
-            return torch.full((B,), float(bits.item()), device=device, dtype=dtype)
-        t = bits.to(device=device, dtype=dtype).reshape(-1)
-        assert t.numel() == B, "bits_est length must match batch size"
-        return t
-    if isinstance(bits, (list, tuple)):
-        assert len(bits) == B, "bits_est length must match batch size"
-        return torch.tensor(bits, device=device, dtype=dtype)
-    return torch.full((B,), float(bits), device=device, dtype=dtype)
-
-
-def score_batch_bits(
-    y_tile: torch.Tensor,
-    synth: torch.Tensor,
-    cfg: SearchCfg,
-    bits_est: Optional[Union[float, Sequence[float], torch.Tensor]] = None,
-    seam_weight: float = 0.0,
-    border_mask: torch.Tensor | None = None,
-) -> ScoreOut:
+def grid_linspace(bounds: List[Tuple[float, float]], steps: List[int], device=None, dtype=None) -> torch.Tensor:
     """
-    Variante de score_batch qui prend une estimation de bits (R) par candidat.
-    - bits_est : float | [float]*B | torch.Tensor(B)
+    Crée une grille régulière D-dimensionnelle.
+    bounds: [(min_d, max_d)] pour d=0..D-1
+    steps:  [S_d] nombre d'échantillons par dimension
+    return: (N, D) avec N = prod(S_d)
     """
-    B = synth.shape[0]
-    yB = y_tile.expand(B, -1, -1, -1)
-
-    if cfg.metric == "ssim":
-        D = 1.0 - ssim(yB, synth)
-    else:
-        D = torch.mean((yB - synth) ** 2, dim=(1, 2, 3))
-
-    if seam_weight > 0.0:
-        if border_mask is None:
-            h, w = y_tile.shape[-2:]
-            border_mask = make_border_mask(h, w, width=8, device=y_tile.device, dtype=y_tile.dtype)
-        seam = torch.mean(((yB - synth) ** 2) * border_mask, dim=(1, 2, 3))
-        D = D + seam_weight * seam
-
-    if bits_est is None:
-        R = torch.full_like(D, 1.0)
-    else:
-        R = _as_batched_bits(bits_est, B, device=D.device, dtype=D.dtype)
-
-    RD = D + cfg.lambda_rd * R
-    return ScoreOut(D=D, R=R, RD=RD)
+    assert len(bounds) == len(steps) and len(bounds) > 0, "bounds/steps mismatch"
+    axes = [torch.linspace(lo, hi, int(S), device=device, dtype=dtype) for (lo, hi), S in zip(bounds, steps)]
+    mesh = torch.meshgrid(*axes, indexing="ij")
+    grid = torch.stack([m.reshape(-1) for m in mesh], dim=-1)
+    return grid  # (N,D)
 
 
-def score_rd_numpy(
-    y: np.ndarray,
-    yhat: np.ndarray,
-    lam: float,
-    alpha: float,
-    bits_est: float,
-    metric: str = "ssim",
-) -> float:
+def local_refine(center: torch.Tensor, deltas: torch.Tensor, steps: List[int]) -> torch.Tensor:
     """
-    Score RD CPU-friendly pour prototypage/tests.
-    - Si metric='ssim': on tente d'utiliser ssim torch (1x1HxW). Si indispo, fallback ~ 0.5*MSE.
-    - Sinon: MSE pur.
+    Grille locale autour d'un centre (D,) avec amplitude 'deltas' (D,).
+    Pour chaque dim d: linspace(center[d]-deltas[d], center[d]+deltas[d], steps[d]).
+    return: (N,D)
     """
-    y = np.asarray(y, dtype=np.float32)
-    yhat = np.asarray(yhat, dtype=np.float32)
+    assert center.ndim == 1 and deltas.ndim == 1 and center.numel() == deltas.numel()
+    D = center.numel()
+    bds: List[Tuple[float, float]] = []
+    for d in range(D):
+        lo = float(center[d] - deltas[d])
+        hi = float(center[d] + deltas[d])
+        if hi < lo:  # garde-fou
+            lo, hi = hi, lo
+        bds.append((lo, hi))
+    return grid_linspace(bds, steps, device=center.device, dtype=center.dtype)
 
-    if metric == "ssim":
-        try:
-            Y = torch.from_numpy(y).reshape(1, 1, *y.shape[-2:])
-            YH = torch.from_numpy(yhat).reshape(1, 1, *yhat.shape[-2:])
-            D_t = 1.0 - ssim(Y, YH)
-            D = float(D_t.reshape(-1)[0])
-        except Exception:
-            mse = float(np.mean((y - yhat) ** 2))
-            D = 0.5 * mse  # proxy raisonnable
-    else:
-        D = float(np.mean((y - yhat) ** 2))
 
-    R = float(bits_est)
-    return float(D + lam * R)
+def select_best_param_from_scores(params: torch.Tensor, scores: torch.Tensor) -> Tuple[torch.Tensor, int]:
+    """
+    params: (N,D) paramètres candidats
+    scores: (N,) coût (plus petit = meilleur)
+    return: (param_best(D,), index)
+    """
+    assert params.ndim == 2 and scores.ndim == 1 and params.shape[0] == scores.shape[0]
+    idx = int(torch.argmin(scores).item())
+    return params[idx], idx
+
+
+# -----------------------------------------------------------------------------
+# Helpers optionnels (future-proof) — non utilisés par les tests actuels
+# -----------------------------------------------------------------------------
+
+def clamp_params(params: torch.Tensor, bounds: List[Tuple[float, float]]) -> torch.Tensor:
+    """
+    Coupe chaque dimension de params (N,D) dans les bornes fournies.
+    """
+    assert params.ndim == 2 and params.shape[1] == len(bounds)
+    out = params.clone()
+    for d, (lo, hi) in enumerate(bounds):
+        out[:, d] = out[:, d].clamp(min=float(lo), max=float(hi))
+    return out
+
+
+def topk_indices(scores: torch.Tensor, k: int) -> torch.Tensor:
+    """
+    Indices des k meilleurs scores (croissants).
+    """
+    k = max(1, min(int(k), scores.numel()))
+    vals, idx = torch.topk(-scores, k)  # négatif → small first
+    # réordonne par score croissant
+    ord_idx = torch.argsort(scores[idx])
+    return idx[ord_idx]
