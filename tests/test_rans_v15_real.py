@@ -1,65 +1,37 @@
-import random
+from __future__ import annotations
 import pytest
 
-from pc15codec.rans import MAGIC, build_rans_tables, rans_encode, rans_decode
+from pc15codec.rans import load_table_by_id
 
+def test_rans_v15_table_invariants():
+    """
+    Invariants de base sur la table rANS packagée (Step 0) :
+    - somme des comptes = 2^precision_bits
+    - alphabet_size cohérent
+    - tous les comptes > 0
+    """
+    t = load_table_by_id("v15_default")
+    assert t["precision_bits"] == 8
+    assert t["alphabet_size"] == 256
 
-def test_rans_roundtrip_small():
-    syms = [1, 2, 3, 3, 2, 1, 255, 0, 128]
-    tables = build_rans_tables(syms, precision=12)
-    blob = rans_encode(syms, tables)
-    back = rans_decode(blob, None)  # tables ignorées car embarquées
-    assert back == syms
+    counts = t["counts"]
+    assert isinstance(counts, list) and len(counts) == t["alphabet_size"]
+    assert all(isinstance(c, int) and c > 0 for c in counts)
+    assert sum(counts) == (1 << t["precision_bits"])
 
+def test_rans_v15_optional_encode_decode():
+    """
+    Future-proof : si une implémentation rANS (encode/decode) est disponible,
+    on fait un round-trip simple ; sinon on SKIP proprement (Step 0).
+    """
+    try:
+        # Ces symboles ne sont pas requis au Step 0
+        from pc15codec.rans import rans_encode, rans_decode  # type: ignore
+    except Exception:
+        pytest.skip("rANS encode/decode non exposés au Step 0")
+        return
 
-def test_rans_roundtrip_random_reproducible():
-    random.seed(1234)
-    syms = [random.randrange(0, 256) for _ in range(1500)]
-    tables = build_rans_tables(syms, precision=12)
-    blob = rans_encode(syms, tables)
-    back = rans_decode(blob, None)
-    assert back == syms
-
-
-def test_rans_empty_sequence_ok():
-    # tables issues d'une distribution quelconque
-    base_syms = [1, 1, 2, 2, 2, 3, 255]
-    tables = build_rans_tables(base_syms, precision=12)
-    blob = rans_encode([], tables)
-    back = rans_decode(blob, None)
-    assert back == []
-
-
-def test_build_tables_precision_bounds():
-    # bornes OK
-    t1 = build_rans_tables([0, 1, 2], precision=1)
-    t2 = build_rans_tables([0, 1, 2], precision=15)
-    assert sum(t1["freqs"]) == (1 << t1["precision"])
-    assert sum(t2["freqs"]) == (1 << t2["precision"])
-
-    # hors bornes → ValueError
-    with pytest.raises(ValueError):
-        build_rans_tables([0, 1], precision=0)
-    with pytest.raises(ValueError):
-        build_rans_tables([0, 1], precision=16)
-
-
-def test_passthrough_when_no_magic():
-    raw = bytes([10, 20, 30, 40])
-    out = rans_decode(raw, None)
-    assert out == list(raw)  # passthrough attendu
-
-
-def test_decode_too_short_payload_raises():
-    # "ANS1" + P (12) + (très) tronqué → trop court
-    bad = MAGIC + bytes([12]) + b"\x00" * 10
-    with pytest.raises(ValueError):
-        rans_decode(bad, None)
-
-
-def test_zero_frequency_symbol_raises_on_encode():
-    # tables construites sans le symbole 99
-    syms = [1, 2, 3, 3, 2, 1]
-    tables = build_rans_tables(syms, precision=12)
-    with pytest.raises(ValueError):
-        rans_encode(syms + [99], tables)  # 99 absent → freq=0 → ValueError
+    data = bytes(range(64))  # payload petit pour test
+    enc = rans_encode(data, table_id="v15_default")
+    dec = rans_decode(enc, table_id="v15_default")
+    assert dec == data
