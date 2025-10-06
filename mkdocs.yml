@@ -20,7 +20,13 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: ['.']
+          paths:
+            - packages/pc15codec/src
+            - packages/pc15data/src
+            - packages/pc15metrics/src
+            - packages/pc15proc/src
+            - packages/pc15viz/src
+            - packages/pc15wf/src
 
 nav:
   - Accueil: index.md
