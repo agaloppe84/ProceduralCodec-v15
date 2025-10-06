@@ -32,18 +32,27 @@ class TileBatchSpec:
 
 def _start_indices(L: int, size: int, overlap: int) -> List[int]:
     """Positions de départ couvrant [0, L) avec overlap.
-    Stride = size - overlap. Force la dernière tuile à L-size.
+    Stride = size - overlap. Ne dépasse jamais L-size. Toujours trié croissant.
     """
+    if L <= 0:
+        return [0]
+    size = max(1, int(size))
+    overlap = max(0, int(overlap))
     stride = max(1, size - overlap)
-    starts = [0]
-    s = 0
-    while s + size < L:
-        s += stride
-        starts.append(s)
+
+    starts: List[int] = [0]
     last = max(0, L - size)
+    pos = 0
+    while True:
+        nxt = pos + stride
+        if nxt > last:
+            break
+        starts.append(nxt)
+        pos = nxt
     if starts[-1] != last:
         starts.append(last)
     return starts
+
 
 def tile_image(y: torch.Tensor, grid: TileGridCfg) -> TileBatchSpec:
     """Prépare la grille de tuiles pour une image Y [1,1,H,W]."""
@@ -179,11 +188,19 @@ def blend(tiles: torch.Tensor, spec: TileBatchSpec, H: int, W: int,
     if N != spec.count:
         raise ValueError(f"tiles count ({N}) != spec.count ({spec.count})")
 
-    # Accumulation pondérée + carte de couverture
+        # Accumulation pondérée + carte de couverture (safe au bord)
     for i, (y0, x0) in enumerate(spec.starts):
-        y1, x1 = y0 + spec.size, x0 + spec.size
-        out[:, :, y0:y1, x0:x1] += tiles[i:i+1, :, :, :] * w2d
-        acc[:, :, y0:y1, x0:x1] += w2d
+        y1 = min(y0 + spec.size, H)
+        x1 = min(x0 + spec.size, W)
+        h = y1 - y0
+        w = x1 - x0
+        if h <= 0 or w <= 0:
+            continue
+        w_patch = w2d[:, :, :h, :w]           # [1,1,h,w]
+        t_patch = tiles[i:i+1, :, :h, :w]     # [1,1,h,w]
+        out[:, :, y0:y1, x0:x1] += t_patch * w_patch
+        acc[:, :, y0:y1, x0:x1] += w_patch
+
 
     out = out / (acc + eps)  # Partition of Unity
     return out
