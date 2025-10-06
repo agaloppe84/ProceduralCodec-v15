@@ -474,11 +474,20 @@ C’est tout — avec ça, **un seul `pip install pc15`** expose l’outil **et*
 ## Step 0 — Pré-flight & gels (v15)
 
 - **CodecConfig** unique (tile/overlap/λ/α/rans_id) — `from pc15codec.config import CodecConfig`.
-- **Tables rANS gelées** packagées sous `pc15codec.data.rans` + override via `PC15_MODELS_DIR/rans/<id>.json`.  <!-- [ML] -->
-- **Header v15 + CRC32** (helpers `pack_v15`/`unpack_v15`).
+- **Tables rANS gelées** packagées sous `pc15codec.data.rans` + override via `PC15_MODELS_DIR/rans/<id>.json`. <!-- [ML] -->
+- **Header v15 + CRC32** (`pack_v15`/`unpack_v15`) — framing stable.
 - **Seed policy** déterministe (`pc15codec.seed.tile_seed`) — idempotence stricte.
-- **Bitstreams I/O** atomique (`read_bitstream` / `write_bitstream`).  <!-- [STORE:OVERWRITE] -->
-- **Chemins paramétriques** (`PathsConfig`) + helpers `outputs_path`/`artifacts_path`.  <!-- [STORE:OVERWRITE] / [STORE:CUMULATIVE] -->
-- **Tests** : `test_public_api.py`, `test_header_crc.py`, `test_seed_policy.py`, `test_rans_tables.py`.
+- **Bitstreams I/O** atomique (`read_bitstream` / `write_bitstream`). <!-- [STORE:OVERWRITE] -->
+- **Chemins paramétriques** (`PathsConfig`) + `outputs_path`/`artifacts_path`. <!-- [STORE:OVERWRITE]/[STORE:CUMULATIVE] -->
+- **Tests** OK : public_api, header_crc, seed_policy, rans_tables (+ *futureproof* skips).
 
-> L’API publique reste `pc15` (façade unifiée) ; les sous-packages `packages/*` sont tolérés manquants à l’import.
+## Step 1 — Tiling & Blend + Tile Records (v15)
+
+- **Tiling** (`pc15codec.tiling`):
+  - `TileGridCfg(size=256, overlap=24)`
+  - `tile_image(y, grid) -> TileBatchSpec` (grille + positions)
+  - `blend(tiles, spec, H, W)` — fenêtre **Hann** sur les overlaps, accumulation normalisée
+- **Tile Records** (`pc15codec.bitstream.TileRec`) :
+  - `tile_id, gen_id, qv_id, seed, rec_flags, payload_fmt, payload`
+  - `to_dict()` / `from_dict()` (pas d’encodage rANS encore)
+- **Tests** : `test_step1_tiling_blend_shapes.py`, `test_step1_tilerec_roundtrip.py`
