@@ -20,11 +20,6 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          # (optionnel) chemins supplémentaires où chercher le code
-          # paths: [ "." ]
-          selection:
-            filters:
-              - "!^_"            # masque les membres privés
           rendering:
             show_if_no_docstring: true
             separate_signature: true
