@@ -120,41 +120,55 @@ def score_batch(
 # -----------------------------------------------------------------------------
 # Scoring RD (bits fournis par appelant)
 # -----------------------------------------------------------------------------
-
 def score_batch_bits(
     y_tile: torch.Tensor,
     synth: torch.Tensor,
-    bits: torch.Tensor | List[float],
     cfg: SearchCfg,
+    *,
+    bits_est: Optional[torch.Tensor | List[float]] = None,
+    bits: Optional[torch.Tensor | List[float]] = None,
     seam_weight: float = 0.0,
     border_mask: Optional[torch.Tensor] = None,
 ) -> ScoreOut:
     """
     Variante où le coût "bits" (R) est fourni par l'appelant, shape (B,).
 
+    Compat :
+      - `bits_est=` (ancien nom utilisé par certains tests)
+      - `bits=`     (nom recommandé)
+
     - D: même calcul que score_batch (SSIM/MSE/mixed + couture optionnelle)
-    - R: = bits (converti en tensor sur le bon device/dtype)
+    - R: = bits fournis
     - RD: D + lambda_rd * R
     """
     assert y_tile.ndim == 4 and y_tile.shape[0] == 1 and y_tile.shape[1] == 1, "y_tile doit être (1,1,H,W)"
     assert synth.ndim == 4 and synth.shape[1] == 1, "synth doit être (B,1,H,W)"
     assert y_tile.shape[-2:] == synth.shape[-2:], "H,W doivent matcher"
 
-    # Convertit bits -> tensor (B,)
-    if not torch.is_tensor(bits):
-        bits_t = torch.tensor(bits, device=synth.device, dtype=synth.dtype)
-    else:
-        bits_t = bits.to(device=synth.device, dtype=synth.dtype)
-    assert bits_t.ndim == 1 and bits_t.numel() == synth.shape[0], "bits doit être (B,)"
+    # Supporte bits_est (legacy) ou bits (nouveau)
+    bits_vec = bits_est if bits_est is not None else bits
+    if bits_vec is None:
+        raise ValueError("You must pass either `bits_est=` (legacy) or `bits=` (preferred).")
 
-    # Calcule D via score_batch (sans recomposer R/RD)
+    # Convertit vers tensor (B,)
+    if not torch.is_tensor(bits_vec):
+        bits_t = torch.tensor(bits_vec, device=synth.device, dtype=synth.dtype)
+    else:
+        bits_t = bits_vec.to(device=synth.device, dtype=synth.dtype)
+
+    B = synth.shape[0]
+    if bits_t.ndim != 1 or bits_t.numel() != B:
+        raise ValueError(f"`bits` must be shape (B,), got {tuple(bits_t.shape)} for B={B}")
+
+    # Calcule D via score_batch (incluant couture éventuelle)
     out = score_batch(y_tile, synth, cfg, seam_weight=seam_weight, border_mask=border_mask)
     D = out.D
 
-    # Remplace R par bits fournis et recalcule RD
+    # Remplace R par les bits fournis et recalcule RD
     R = bits_t
     RD = D + float(cfg.lambda_rd) * R
     return ScoreOut(D=D, R=R, RD=RD)
+
 
 
 # -----------------------------------------------------------------------------
