@@ -1,5 +1,5 @@
 # configs/requirements.docs.txt
--r configs/requirements.dev.txt   # ← mets ici le nom exact de TON fichier existant
+-r requirements.dev.txt   # ← mets ici le nom exact de TON fichier existant
 mkdocs>=1.5
 mkdocs-material
 mkdocstrings[python]
