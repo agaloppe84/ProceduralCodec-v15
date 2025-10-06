@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
+import numpy as np
 import torch
 from pc15metrics.psnr_ssim import ssim
 
@@ -31,7 +32,7 @@ class SearchCfg:
 class ScoreOut:
     """Paquet résultat du score batch."""
     D: torch.Tensor   # (B,)
-    R: torch.Tensor   # (B,)  -- proxy bits (placeholder = 1.0)
+    R: torch.Tensor   # (B,)  -- proxy bits ou bits fournis
     RD: torch.Tensor  # (B,)
 
 
@@ -56,7 +57,7 @@ def make_border_mask(h: int, w: int, width: int = 8, device=None, dtype=None) ->
 
 
 # -----------------------------------------------------------------------------
-# Scoring RD
+# Scoring RD (proxy-bits constant = 1.0)
 # -----------------------------------------------------------------------------
 
 def score_batch(
@@ -103,7 +104,6 @@ def score_batch(
         if border_mask is None:
             h, w = y_tile.shape[-2:]
             border_mask = make_border_mask(h, w, width=8, device=y_tile.device, dtype=y_tile.dtype)
-        # Assurer même device/dtype
         if border_mask.device != y_tile.device:
             border_mask = border_mask.to(y_tile.device)
         if border_mask.dtype != y_tile.dtype:
@@ -113,7 +113,46 @@ def score_batch(
 
     # Proxy bits (placeholder constant pour S1)
     R = torch.ones_like(D)
+    RD = D + float(cfg.lambda_rd) * R
+    return ScoreOut(D=D, R=R, RD=RD)
 
+
+# -----------------------------------------------------------------------------
+# Scoring RD (bits fournis par appelant)
+# -----------------------------------------------------------------------------
+
+def score_batch_bits(
+    y_tile: torch.Tensor,
+    synth: torch.Tensor,
+    bits: torch.Tensor | List[float],
+    cfg: SearchCfg,
+    seam_weight: float = 0.0,
+    border_mask: Optional[torch.Tensor] = None,
+) -> ScoreOut:
+    """
+    Variante où le coût "bits" (R) est fourni par l'appelant, shape (B,).
+
+    - D: même calcul que score_batch (SSIM/MSE/mixed + couture optionnelle)
+    - R: = bits (converti en tensor sur le bon device/dtype)
+    - RD: D + lambda_rd * R
+    """
+    assert y_tile.ndim == 4 and y_tile.shape[0] == 1 and y_tile.shape[1] == 1, "y_tile doit être (1,1,H,W)"
+    assert synth.ndim == 4 and synth.shape[1] == 1, "synth doit être (B,1,H,W)"
+    assert y_tile.shape[-2:] == synth.shape[-2:], "H,W doivent matcher"
+
+    # Convertit bits -> tensor (B,)
+    if not torch.is_tensor(bits):
+        bits_t = torch.tensor(bits, device=synth.device, dtype=synth.dtype)
+    else:
+        bits_t = bits.to(device=synth.device, dtype=synth.dtype)
+    assert bits_t.ndim == 1 and bits_t.numel() == synth.shape[0], "bits doit être (B,)"
+
+    # Calcule D via score_batch (sans recomposer R/RD)
+    out = score_batch(y_tile, synth, cfg, seam_weight=seam_weight, border_mask=border_mask)
+    D = out.D
+
+    # Remplace R par bits fournis et recalcule RD
+    R = bits_t
     RD = D + float(cfg.lambda_rd) * R
     return ScoreOut(D=D, R=R, RD=RD)
 
@@ -170,9 +209,7 @@ def select_best_param_from_scores(params: torch.Tensor, scores: torch.Tensor) ->
 # -----------------------------------------------------------------------------
 
 def clamp_params(params: torch.Tensor, bounds: List[Tuple[float, float]]) -> torch.Tensor:
-    """
-    Coupe chaque dimension de params (N,D) dans les bornes fournies.
-    """
+    """Coupe chaque dimension de params (N,D) dans les bornes fournies."""
     assert params.ndim == 2 and params.shape[1] == len(bounds)
     out = params.clone()
     for d, (lo, hi) in enumerate(bounds):
@@ -181,11 +218,22 @@ def clamp_params(params: torch.Tensor, bounds: List[Tuple[float, float]]) -> tor
 
 
 def topk_indices(scores: torch.Tensor, k: int) -> torch.Tensor:
-    """
-    Indices des k meilleurs scores (croissants).
-    """
+    """Indices des k meilleurs scores (croissants)."""
     k = max(1, min(int(k), scores.numel()))
-    vals, idx = torch.topk(-scores, k)  # négatif → small first
-    # réordonne par score croissant
+    _, idx = torch.topk(-scores, k)  # négatif → small first
     ord_idx = torch.argsort(scores[idx])
     return idx[ord_idx]
+
+
+# -----------------------------------------------------------------------------
+# Numpy helper (utilisé par des tests)
+# -----------------------------------------------------------------------------
+
+def score_rd_numpy(D: np.ndarray | List[float], R: np.ndarray | List[float], lambda_rd: float) -> np.ndarray:
+    """
+    Petit helper numpy: RD = D + lambda_rd * R.
+    """
+    D = np.asarray(D, dtype=np.float64)
+    R = np.asarray(R, dtype=np.float64)
+    assert D.shape == R.shape
+    return D + float(lambda_rd) * R
