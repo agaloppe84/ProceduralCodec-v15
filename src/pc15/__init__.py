@@ -54,11 +54,23 @@ except Exception:
 
 # High-level convenience re-exports (top-level functions)
 if codec is not None:
+    # Import explicit depuis les sous-modules (plus robuste)
     try:
-        from pc15codec import encode_y, decode_y, rans_encode, rans_decode, build_rans_tables, read_bitstream, write_bitstream, score_rd_numpy
+        from pc15codec.codec import encode_y, decode_y
     except Exception:
-        # Not all low-level helpers are guaranteed stable; export what works
-        from pc15codec import encode_y, decode_y  # type: ignore
+        encode_y = decode_y = None  # type: ignore
+    try:
+        from pc15codec.rans import rans_encode, rans_decode, build_rans_tables
+    except Exception:
+        rans_encode = rans_decode = build_rans_tables = None  # type: ignore
+    try:
+        from pc15codec.bitstream import read_bitstream, write_bitstream
+    except Exception:
+        read_bitstream = write_bitstream = None  # type: ignore
+    try:
+        from pc15codec.search import score_rd_numpy
+    except Exception:
+        score_rd_numpy = None  # type: ignore
 else:
     encode_y = decode_y = None  # type: ignore
 
