@@ -27,6 +27,11 @@ plugins:
             - packages/pc15proc/src
             - packages/pc15viz/src
             - packages/pc15wf/src
+          options:
+            show_if_no_docstring: true
+            members_order: source
+            docstring_style: numpy
+            show_source: false
 
 nav:
   - Accueil: index.md
