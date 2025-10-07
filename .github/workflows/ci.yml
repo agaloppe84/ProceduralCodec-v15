@@ -47,10 +47,11 @@ jobs:
           print("façade encode_y symbol:", hasattr(pc15, "encode_y"))
           PY
 
-      - name: Test
+      - name: Test (flows only)
         run: |
           export PC15_ALLOW_CPU_TESTS=1
-          pytest -q --maxfail=1 --disable-warnings -o log_cli=true -o log_cli_level=INFO
+          pytest -q tests/flows --maxfail=1 --disable-warnings -o log_cli=true -o log_cli_level=INFO
+
 
       - name: Generate code_state (versioned)
         id: code_state

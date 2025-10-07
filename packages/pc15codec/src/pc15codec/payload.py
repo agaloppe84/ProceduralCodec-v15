@@ -1,5 +1,7 @@
 # packages/pc15codec/src/pc15codec/payload.py
+# -----------------------------------------------------------------------------
 # Step 2: RAW-only payload; rANS (ANS0) arrivera au Step 3.
+# [ML/ENTROPY:WILL_STORE] - manipule des blobs encodés destinés au bitstream.
 from __future__ import annotations
 from typing import Tuple
 

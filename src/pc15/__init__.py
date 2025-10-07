@@ -1,3 +1,4 @@
+# src/pc15/__init__.py
 """PC15 - unified API (v15)
 Install once, import one namespace:
 
@@ -54,15 +55,18 @@ except Exception:
 
 # High-level convenience re-exports (top-level functions)
 if codec is not None:
-    # Import explicit depuis les sous-modules (plus robuste)
+    # Import explicite depuis les sous-modules (plus robuste)
     try:
         from pc15codec.codec import encode_y, decode_y, CodecConfig
     except Exception:
         encode_y = decode_y = CodecConfig = None  # type: ignore
+
+    # ⚠️ rANS helpers : importer depuis l'impl (pas le package tables)
     try:
-        from pc15codec.rans import rans_encode, rans_decode, build_rans_tables
+        from pc15codec.rans_impl import rans_encode, rans_decode, build_rans_tables
     except Exception:
         rans_encode = rans_decode = build_rans_tables = None  # type: ignore
+
     try:
         from pc15codec.bitstream import read_bitstream, write_bitstream
     except Exception:

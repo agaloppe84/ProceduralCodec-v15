@@ -1,9 +1,13 @@
+# packages/pc15codec/src/pc15codec/rans_impl.py
+# -----------------------------------------------------------------------------
+# rANS v15 - implémentation principale (tables embarquées)
+
 # packages/pc15codec/src/pc15codec/rans.py
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional
 
 """
-rANS v15 — table-based (embedded tables)
+rANS v15 - table-based (embedded tables)
 ========================================
 
 But
@@ -315,3 +319,23 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
             x = (x << 16) | (hi << 8) | lo
 
     return res
+
+
+
+# [ML/ENTROPY:WILL_STORE] - encode/décode entropique, stocke des tables/symboles.
+
+# --- Début "filet de sécurité" (à enlever une fois le vrai code collé) -------
+# Ces définitions évitent un ImportError si tu pushes avant de coller l'impl.
+MAGIC = b"ANS0"
+
+def build_rans_tables(*_args, **_kwargs):
+    raise NotImplementedError("rans_impl.build_rans_tables: coller l'impl depuis rans.py")
+
+def rans_encode(*_args, **_kwargs):
+    raise NotImplementedError("rans_impl.rans_encode: coller l'impl depuis rans.py")
+
+def rans_decode(*_args, **_kwargs):
+    raise NotImplementedError("rans_impl.rans_decode: coller l'impl depuis rans.py")
+# --- Fin "filet de sécurité" -------------------------------------------------
+
+__all__ = ["MAGIC", "build_rans_tables", "rans_encode", "rans_decode"]
