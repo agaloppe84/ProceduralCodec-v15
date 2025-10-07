@@ -59,6 +59,8 @@ jobs:
             --max-bytes 200000 \
             --exclude-glob "docs/**" \
             --exclude-glob ".github/**" \
+            --exclude-glob "README.md" \
+            --exclude-glob "readme.md" \
             --exclude-glob "**/__pycache__/**" \
             --exclude-glob "**/.venv/**" \
             --exclude-glob "**/venv/**" \
