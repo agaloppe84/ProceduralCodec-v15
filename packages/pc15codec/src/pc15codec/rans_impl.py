@@ -1,44 +1,52 @@
 # packages/pc15codec/src/pc15codec/rans_impl.py
 # -----------------------------------------------------------------------------
-# rANS v15 - implémentation principale (tables embarquées)
+# rANS v15 - implémentation principale (tables référencées, format ANS0)
 
-# packages/pc15codec/src/pc15codec/rans.py
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional
 
 """
-rANS v15 - table-based (embedded tables)
-========================================
+rANS v15 - table-referenced (ANS0)
+==================================
 
 But
 ----
 Compresser une suite de symboles 8-bit (0..255) quasi à l’entropie en utilisant
-un ANS 32-bit déterministe et rapide, avec tables (freqs/CDF) **embarquées** dans
-le payload. Cela rend chaque payload auto-portant et simple à décoder.
+un ANS 32-bit déterministe et rapide, **sans** embarquer les tables dans le
+payload. Les tables (freqs/CDF) sont **référencées** via un `table_id` court,
+puis chargées côté décodeur.
 
 Payload layout (little-endian)
 ------------------------------
-[0:4]    b"ANS1"                 # MAGIC
-[4]      P                       # precision (1..15) => base = 1<<P
-[5:5+512] 256 * u16 freqs        # fréquences normalisées (somme = base)
-[...+512: +4]  u32 nsym          # nombre de symboles
-[...: -4]      stream bytes      # chunks 16-bit LSB-first (renormalisation)
-[-4:]   u32 final_state          # état final x
+[0:4]     b"ANS0"                  # MAGIC
+[4]       L                        # u8, longueur de `table_id`
+[5:5+L]   table_id (ASCII)         # ex: b"v15_default"
+[...:]
+          stream bytes (sans tables) :
+            [0:4]   u32 nsym       # nombre de symboles
+            [4:8]   u32 state      # état final x
+            [8:]    renorm chunks  # 16-bit LSB-first produits à l’encodage
 
 API
 ---
-- build_rans_tables(symbols, precision=12) -> {"precision":P,"freqs":[...],"cdf":[...]}
-- rans_encode(symbols, tables)  -> bytes payload (MAGIC + tables + stream + state)
-- rans_decode(payload, tables=None) -> List[int]  # ignore `tables` si MAGIC présent
+- build_rans_tables(symbols, precision=12)
+    -> {"precision":P,"freqs":[256*u16],"cdf":[257*u32]}
+- rans_encode(symbols, tables_or_id)
+    -> bytes payload:
+       * si `tables_or_id` est `str` (table_id) : écrit l’entête ANS0
+         (MAGIC + L + table_id) puis le stream (nsym + state + chunks).
+       * si `tables_or_id` est un dict tables : renvoie **uniquement**
+         le stream (nsym + state + chunks), utile pour des tests bas-niveau.
+- rans_decode(payload, tables_loader=None)
+    -> List[int] symbols ; lit ANS0, charge les tables via `tables_loader`
+       (par défaut `pc15codec.rans.load_table_by_id`), puis décompresse.
 
 Notes
 -----
-- `precision` bornée à [1..15] pour garder les freqs sur u16 (base <= 32768).
-- Les symboles absents du corpus ont freq=0 ; ceux présents ont au moins 1.
-- rANS encode en parcourant les symboles **à l'envers** et émet des chunks 16-bit
-  LSB-first lors de la renormalisation ; le décodeur lit ces chunks **à rebours (LIFO)**.
-- Compat: si le payload **ne** commence **pas** par MAGIC, on renvoie les octets tels quels
-  (mode “passthrough” utile en phase de transition).
+- `precision` bornée à [1..15] (base <= 32768) pour des freqs sur u16.
+- Renormalisation encodeur/décodeur par pas de 16 bits (LSB-first).
+- Ce module ne gère **pas** le cas "payload sans MAGIC" (migration ANS1) :
+  on lève une erreur pour garantir la déterminisme et éviter les ambiguïtés.
 """
 
 __all__ = [
@@ -48,7 +56,8 @@ __all__ = [
     "rans_decode",
 ]
 
-MAGIC = b"ANS1"  # payload marker for table-embedded rANS v1
+# Marqueur ANS0 (tables référencées par id)
+MAGIC = b"ANS0"
 
 
 # -----------------------------------------------------------------------------
@@ -130,6 +139,7 @@ def _normalize_histogram(hist: List[int], precision: int) -> List[int]:
     return alloc
 
 
+# [ML/ENTROPY:WILL_STORE]
 def build_rans_tables(symbols: List[int], precision: int = 12) -> Dict[str, object]:
     """
     Construit les tables rANS (freqs + CDF) à partir d'un échantillon de symboles.
@@ -159,7 +169,7 @@ def build_rans_tables(symbols: List[int], precision: int = 12) -> Dict[str, obje
 
 
 # -----------------------------------------------------------------------------
-# Core rANS 32-bit (table-based)
+# Core rANS 32-bit (table-based, sans en-tête ANS0)
 # -----------------------------------------------------------------------------
 def _enc_threshold(freq: int, precision: int) -> int:
     """
@@ -176,17 +186,12 @@ def _dec_threshold() -> int:
     return 1 << 16
 
 
-def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
+def _rans_core_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
     """
-    Encode des symboles 0..255 en flux rANS avec tables embarquées (MAGIC + tables + stream + state).
+    Encode rANS en produisant **uniquement** le flux core :
+      stream = u32 nsym | u32 final_state | renorm_chunks (16-bit LSB-first)
 
-    Payload layout:
-      - 4 bytes : b"ANS1"
-      - 1 byte  : precision P
-      - 256*u16 : freqs (little-endian)
-      - u32     : nsym
-      - ...     : renorm chunks (16-bit LSB-first, variable length)
-      - u32     : final state x (little-endian)
+    Retourne `bytes` prêtes à être préfixées par l'entête ANS0 si nécessaire.
     """
     P = int(tables["precision"])
     if not (1 <= P <= 15):
@@ -201,7 +206,7 @@ def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
 
     # État initial haut (convention rANS 32-bit avec renorm 16-bit)
     x = 1 << 16
-    out = bytearray()
+    chunks = bytearray()
 
     # Encode en ordre inverse
     for s in reversed(symbols):
@@ -213,97 +218,66 @@ def rans_encode(symbols: List[int], tables: Dict[str, object]) -> bytes:
         # Renormalisation encodeur
         T = _enc_threshold(f, P)  # f << (32 - P)
         while x >= T:
-            out.append(x & 0xFF)
-            out.append((x >> 8) & 0xFF)
+            chunks.append(x & 0xFF)
+            chunks.append((x >> 8) & 0xFF)
             x >>= 16
         # Étape core
         x = ((x // f) << P) + (x % f) + c
 
-    # état final (little-endian u32)
-    state_bytes = bytes((
-        x & 0xFF,
-        (x >> 8) & 0xFF,
-        (x >> 16) & 0xFF,
-        (x >> 24) & 0xFF,
-    ))
-
-    # header + tables + nsym
-    buf = bytearray()
-    buf.extend(MAGIC)
-    buf.append(P & 0xFF)
-    for f in freqs:  # u16 LE
-        if not (0 <= f <= 0xFFFF):
-            raise ValueError("frequency out of u16 range")
-        buf.append(f & 0xFF)
-        buf.append((f >> 8) & 0xFF)
-
+    # Préfixe: nsym (u32) puis état final (u32), puis les chunks LSB-first
     nsym = len(symbols)
+    buf = bytearray()
     buf.extend((
         nsym & 0xFF, (nsym >> 8) & 0xFF, (nsym >> 16) & 0xFF, (nsym >> 24) & 0xFF
     ))
-
-    # stream + final state
-    buf.extend(out)          # renorm chunks (LSB-first 16-bit)
-    buf.extend(state_bytes)  # final state
+    buf.extend((
+        x & 0xFF, (x >> 8) & 0xFF, (x >> 16) & 0xFF, (x >> 24) & 0xFF
+    ))
+    buf.extend(chunks)
     return bytes(buf)
 
 
-def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List[int]:
+def _rans_core_decode(stream: bytes, tables: Dict[str, object]) -> List[int]:
     """
-    Décode un payload produit par rans_encode. Si `data` ne commence pas par MAGIC,
-    on retourne les octets tels quels (mode passthrough).
-
-    NB: si MAGIC présent, les tables embarquées **prennent le pas** sur `tables`.
+    Décode le flux core :
+      stream = u32 nsym | u32 final_state | renorm_chunks (16-bit LSB-first)
     """
-    if not data.startswith(MAGIC):
-        # Legacy / passthrough (utile pendant les migrations)
-        return [b for b in data]
+    if len(stream) < 8:
+        raise ValueError("rANS stream too short")
 
-    # Longueur minimale: MAGIC(4) + P(1) + freqs(512) + nsym(4) + state(4)
-    if len(data) < 4 + 1 + 512 + 4 + 4:
-        raise ValueError("rANS payload too short")
+    nsym = int.from_bytes(stream[0:4], "little")
+    x = int.from_bytes(stream[4:8], "little")
+    renorm = stream[8:]
 
-    P = data[4]
+    P = int(tables["precision"])
     if not (1 <= P <= 15):
-        raise ValueError(f"invalid precision in payload: {P}")
+        raise ValueError(f"precision out of range: {P}")
     base = 1 << P
 
-    # Tables embarquées
-    freqs = [int.from_bytes(data[5 + 2 * i: 7 + 2 * i], "little") for i in range(256)]
+    freqs: List[int] = list(tables["freqs"])
     if sum(freqs) != base:
-        raise ValueError("embedded freqs sum mismatch")
-    off = 5 + 512
-    nsym = int.from_bytes(data[off:off + 4], "little")
-    off += 4
-    if nsym < 0:
-        raise ValueError("invalid nsym")
+        raise ValueError("freqs must sum to base (1<<precision)")
 
-    # stream + final state
-    if len(data) < off + 4:
-        raise ValueError("corrupted payload (missing final state)")
-    stream = data[off:-4]
-    x = int.from_bytes(data[-4:], "little")
-
-    # Inverse map L[r] -> symbol (utilise la CDF implicite)
-    L = [0] * base
+    # Inverse map L[r] -> symbol, et CDF implicite
+    Lmap = [0] * base
     cdf = [0] * 257
     acc = 0
     for i, f in enumerate(freqs):
         cdf[i] = acc
         acc_next = acc + f
         for r in range(acc, acc_next):
-            L[r] = i
+            Lmap[r] = i
         acc = acc_next
     cdf[256] = acc
 
     res = [0] * nsym
-    ptr = len(stream)  # LIFO : on lit les chunks à rebours (fin -> début)
+    ptr = len(renorm)  # LIFO : on lit les chunks à rebours (fin -> début)
     mask = (1 << P) - 1
     Tdec = _dec_threshold()  # = 1<<16
 
     for i in range(nsym):
         r = x & mask
-        s = L[r]
+        s = Lmap[r]
         res[i] = s
         f = freqs[s]
         c = cdf[s]
@@ -314,15 +288,75 @@ def rans_decode(data: bytes, tables: Optional[Dict[str, object]] = None) -> List
             if ptr < 2:
                 raise ValueError("rANS stream underflow")
             ptr -= 2
-            lo = stream[ptr]
-            hi = stream[ptr + 1]
+            lo = renorm[ptr]
+            hi = renorm[ptr + 1]
             x = (x << 16) | (hi << 8) | lo
 
     return res
 
 
+# -----------------------------------------------------------------------------
+# Enveloppe ANS0 (header + table_id) et API publique
+# -----------------------------------------------------------------------------
+# [ML/ENTROPY:WILL_STORE]
+def rans_encode(symbols: List[int], tables_or_id, precision: int | None = None) -> bytes:
+    """
+    Encode une liste de symboles 0..255 avec rANS.
+
+    - Si `tables_or_id` est `str` (table_id) :
+        écrit l'entête ANS0 (MAGIC + u8 L + table_id ASCII) puis
+        le flux core (u32 nsym | u32 state | chunks), en chargeant
+        les tables via `pc15codec.rans.load_table_by_id(table_id)`.
+    - Si `tables_or_id` est un dict de tables :
+        retourne **uniquement** le flux core (sans entête ANS0).
+    """
+    # 1) Résolution des tables
+    if isinstance(tables_or_id, str):
+        table_id = tables_or_id
+        from pc15codec.rans import load_table_by_id  # lazy import pour éviter les cycles
+        tables = load_table_by_id(table_id)
+        # 2) Encodage core
+        stream = _rans_core_encode(symbols, tables)
+        tid = table_id.encode("ascii")
+        if len(tid) > 255:
+            raise ValueError("table_id too long (max 255 ASCII bytes)")
+        return MAGIC + bytes([len(tid)]) + tid + stream
+    else:
+        tables = tables_or_id
+        return _rans_core_encode(symbols, tables)
+
+
+# [ML/ENTROPY:WILL_STORE]
+def rans_decode(payload: bytes, tables_loader=None) -> List[int]:
+    """
+    Décode un payload ANS0.
+    - Lit `MAGIC`, `L`, `table_id`.
+    - Charge les tables via `tables_loader(table_id)` (par défaut `pc15codec.rans.load_table_by_id`).
+    - Décode le flux core et retourne la liste des symboles.
+
+    NB: Les payloads **sans** entête ANS0 ne sont **pas** supportés ici.
+    """
+    if not payload.startswith(MAGIC):
+        raise ValueError("rans_decode: unsupported payload (missing ANS0 header)")
+
+    if len(payload) < 5:
+        raise ValueError("rans_decode: payload too short")
+
+    L = payload[4]
+    if len(payload) < 5 + L:
+        raise ValueError("rans_decode: truncated table_id")
+
+    table_id = payload[5:5 + L].decode("ascii")
+    stream = payload[5 + L:]
+
+    if tables_loader is None:
+        from pc15codec.rans import load_table_by_id
+        tables_loader = load_table_by_id
+
+    tables = tables_loader(table_id)
+    return _rans_core_decode(stream, tables)
+
 
 # [ML/ENTROPY:WILL_STORE] - encode/décode entropique, stocke des tables/symboles.
-
 
 __all__ = ["MAGIC", "build_rans_tables", "rans_encode", "rans_decode"]
