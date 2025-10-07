@@ -1,3 +1,9 @@
-# API - pc15codec
-
-::: pc15codec
+# pc15codec
+::: pc15codec.codec
+::: pc15codec.bitstream
+::: pc15codec.tiling
+::: pc15codec.search
+::: pc15codec.rans
+::: pc15codec.payload
+::: pc15codec.symbols
+::: pc15codec.qv
