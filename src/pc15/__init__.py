@@ -88,11 +88,17 @@ else:
 
 if metrics is not None:
     try:
-        from pc15metrics import psnr, ssim
+        # Chemin standard : racine si elle ré-exporte
+        from pc15metrics import psnr, ssim  # type: ignore
     except Exception:
-        psnr = ssim = None  # type: ignore
+        try:
+            # Fallback : sous-module canonique
+            from pc15metrics.metrics import psnr, ssim  # type: ignore
+        except Exception:
+            psnr = ssim = None  # type: ignore
 else:
     psnr = ssim = None  # type: ignore
+
 
 if data is not None:
     try:
