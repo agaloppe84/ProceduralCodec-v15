@@ -71,6 +71,18 @@ if codec is not None:
         from pc15codec.bitstream import read_bitstream, write_bitstream
     except Exception:
         read_bitstream = write_bitstream = None  # type: ignore
+
+        # (Optionnel) Exposer aussi l'API v15 moderne (header+records+stream)
+    try:
+        from pc15codec.bitstream import (
+            pack_v15, unpack_v15,
+            TileRec,
+            write_stream_v15, read_stream_v15,
+        )
+    except Exception:
+        pack_v15 = unpack_v15 = TileRec = write_stream_v15 = read_stream_v15 = None  # type: ignore
+
+
     try:
         from pc15codec.search import score_rd_numpy
     except Exception:
@@ -140,14 +152,22 @@ __all__ = [
     # sub-namespaces
     "codec", "proc", "metrics", "data", "viz", "wf", "vq", "core", "learn",
     # convenience
-    "encode_y", "decode_y", "CodecConfig", "rans_encode", "rans_decode", "build_rans_tables",
-    "read_bitstream", "write_bitstream", "score_rd_numpy",
+    "encode_y", "decode_y", "CodecConfig",
+    "rans_encode", "rans_decode", "build_rans_tables",
+    # bitstream (legacy + v15 moderne)
+    "read_bitstream", "write_bitstream",
+    "pack_v15", "unpack_v15", "TileRec", "write_stream_v15", "read_stream_v15",
+    # proc
     "list_generators", "render",
+    # metrics
     "psnr", "ssim",
+    # data
     "scan_images", "to_luma_tensor", "build_manifest", "ensure_symlink",
+    # viz
     "montage", "plot_rd", "preview_tile_vs_synth",
+    # wf
     "pc15_name", "atomic_write", "load_manifest", "save_manifest", "log_append",
     # learn helpers (optionnel)
-    "PathsConfig","env_summary","HeuristicHooks","encode_y_with_hooks",
+    "PathsConfig", "env_summary", "HeuristicHooks", "encode_y_with_hooks",
     "__version__",
 ]
