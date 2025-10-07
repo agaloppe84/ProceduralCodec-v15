@@ -8,7 +8,16 @@ from pc15proc.register_all import register_all
 from pc15proc.registry import get
 from pc15proc.params import ParamCodec
 from pc15codec.tiling import TileGridCfg, tile_image, blend
-from pc15metrics import psnr, ssim
+
+# Import robuste des métriques: racine pc15metrics -> sous-module -> façade pc15
+try:
+    from pc15metrics import psnr, ssim
+except Exception:
+    try:
+        from pc15metrics.metrics import psnr, ssim
+    except Exception:
+        from pc15 import psnr, ssim
+
 from pc15codec.bitstream import (
     pack_v15, unpack_v15,
     TileRec,
@@ -76,7 +85,7 @@ def test_flow_bitstream_v15_raw():
 
 
 def test_flow_public_api():
-    """Flow 3 — Façade publique `pc15` (import / namespaces)."""
+    """Flow 3 - Façade publique `pc15` (import / namespaces)."""
     pc = importlib.import_module("pc15")
     assert hasattr(pc, "__version__")
     for name in ("codec", "proc", "metrics", "data", "viz", "wf"):

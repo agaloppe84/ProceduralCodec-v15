@@ -1,3 +1,5 @@
+# packages/pc15metrics/src/pc15metrics/__init__.py
 from __future__ import annotations
-__all__: list[str] = []
-__version__ = "15.0.0"
+from .metrics import psnr, ssim
+
+__all__ = ["psnr", "ssim"]
