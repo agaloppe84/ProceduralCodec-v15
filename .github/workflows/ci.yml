@@ -52,6 +52,40 @@ jobs:
           export PC15_ALLOW_CPU_TESTS=1
           pytest -q --maxfail=1 --disable-warnings -o log_cli=true -o log_cli_level=INFO
 
+      - name: Generate code_state (versioned)
+        id: code_state
+        run: |
+          python .github/scripts/code_state.py \
+            --max-bytes 200000 \
+            --exclude-glob "docs/**" \
+            --exclude-glob ".github/**" \
+            --exclude-glob "**/__pycache__/**" \
+            --exclude-glob "**/.venv/**" \
+            --exclude-glob "**/venv/**" \
+            --exclude-glob "**/node_modules/**" \
+            --exclude-glob "**/.mypy_cache/**" \
+            --exclude-glob "**/.pytest_cache/**" \
+            --exclude-glob "**/*.png" \
+            --exclude-glob "**/*.jpg" \
+            --exclude-glob "**/*.jpeg" \
+            --exclude-glob "**/*.gif" \
+            --exclude-glob "**/*.pdf" \
+            --exclude-glob "**/*.zip" \
+            --exclude-glob "**/*.tar" \
+            --exclude-glob "**/*.7z" \
+            --exclude-glob "**/*.mp4" \
+            --exclude-glob "**/*.pc15" \
+            --exclude-glob "storage/**" \
+            --exclude-glob "datasets/**"
+
+      - name: Upload code_state artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code_state_${{ github.run_number }}
+          path: ${{ steps.code_state.outputs.file }}
+
+
       - name: Upload audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
