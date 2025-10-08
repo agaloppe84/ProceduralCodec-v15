@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import torch
 
-from .config import CodecConfig  # <<< unifiée ici
+from .config import CodecConfig  # <- config publique unifiée
 
 # v15 bitstream (package)
 from .bitstream import (
@@ -30,41 +29,6 @@ from .rans import DEFAULT_TABLE_ID
 
 
 __all__ = ["CodecConfig", "encode_y", "decode_y"]
-
-
-@dataclass
-class CodecConfig:
-    """
-    Configuration du codec Y-only v15 (Step 3).
-
-    Attributs
-    ---------
-    tile : int
-        Taille de tuile carrée (pixels).
-    overlap : int
-        Overlap (pixels) pour le blend inter-tuiles.
-    colorspace : int
-        0 = Y-only (Step 3), chroma viendra ensuite.
-    flags : int
-        Flags codec (réservé).
-    payload_precision : int
-        Précision des tables (bits) pour le rANS *si* génération à la volée.
-        (Ici on utilise des tables gelées, champ conservé pour la méta.)
-    lambda_rd : float
-        Poids du coût bits dans le score RD (utilisé aux Steps suivants).
-    alpha_mix : float
-        Poids SSIM vs MSE dans la distortion (Steps suivants).
-    seed : int
-        Graine globale (déterminisme).
-    """
-    tile: int = 256
-    overlap: int = 24
-    colorspace: int = 0    # 0 = Y-only
-    flags: int = 0
-    payload_precision: int = 12
-    lambda_rd: float = 0.015
-    alpha_mix: float = 0.7
-    seed: int = 1234
 
 
 def _grid_rects(H: int, W: int, tile: int, overlap: int) -> List[tuple[int, int, int, int]]:
@@ -209,18 +173,6 @@ def decode_y(bitstream: bytes, device: str = "cuda") -> torch.Tensor:
         * si `payload_fmt == RAW_FMT`  → `decode_tile_payload_raw(...)`.
     - La véritable reconstruction par tuiles sera branchée au Step 4 ; ici on
       renvoie un tenseur noir de la bonne dimension pour valider le trajet I/O.
-
-    Paramètres
-    ----------
-    bitstream : bytes
-        Flux produit par `encode_y` (Step 3).
-    device : str
-        Réservé pour Step 4+ (CUDA vs CPU). Non utilisé ici.
-
-    Retour
-    ------
-    torch.Tensor
-        Tenseur [1,1,H,W] (float32), rempli de zéros.
     """
     header, records = read_stream_v15(bitstream)
     H, W = int(header["height"]), int(header["width"])
