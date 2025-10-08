@@ -19,7 +19,7 @@ def test_flow_step4_end_to_end(monkeypatch, H, W, tile, overlap):
 
     Notes :
       - Pas de dépendance GPU : on force PC15_ALLOW_CPU_TESTS=1
-      - La reconstruction Step 4 peut être synthétique côté decode (stripes deterministes).
+      - La reconstruction Step 4 peut être synthétique côté decode (stripes déterministes).
     """
 
     # -- Env: force ANS0 (par défaut) + chemins CPU-friendly
@@ -63,9 +63,13 @@ def test_flow_step4_end_to_end(monkeypatch, H, W, tile, overlap):
         L = r.payload[4]
         table_id = r.payload[5 : 5 + L].decode("ascii")
         assert table_id == DEFAULT_TABLE_ID
-        # Round-trip symbolique ok (ne doit pas lever)
-        syms = decode_tile_payload(r.payload)
-        assert isinstance(syms, list) and len(syms) >= 5
+        # Round-trip symbolique : decode_tile_payload renvoie la 5-uplet (gen_id,qv_id,seed,flags,offsets)
+        fields = decode_tile_payload(r.payload)
+        assert isinstance(fields, tuple) and len(fields) == 5
+        g, qv, s, flg, offs = fields
+        assert isinstance(offs, list)
+        # seed dérivée par tuile (cfg.seed + tid mod 2^32)
+        assert s == ((cfg.seed + r.tile_id) & 0xFFFFFFFF)
 
     # =========
     # 2) Decode → reconstruction non nulle
