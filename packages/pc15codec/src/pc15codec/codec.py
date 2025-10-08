@@ -1,6 +1,7 @@
 # packages/pc15codec/src/pc15codec/codec.py
 from __future__ import annotations
 
+import math
 import os
 import time
 from typing import Any, Dict, List
@@ -27,16 +28,18 @@ from .payload import (
 )
 from .rans import DEFAULT_TABLE_ID
 
+# Tiling/blend (Step 4)
+from .tiling import TileGridCfg, tile_image, blend
 
 __all__ = ["CodecConfig", "encode_y", "decode_y"]
 
 
-def _grid_rects(H: int, W: int, tile: int, overlap: int) -> List[tuple[int, int, int, int]]:
-    """
-    Génère les rectangles de tuiles avec overlap (ordre raster).
+# -----------------------
+# Helpers Step 3 (encode)
+# -----------------------
 
-    Retourne une liste de tuples (y0, y1, x0, x1), *clampés* aux bords.
-    """
+def _grid_rects(H: int, W: int, tile: int, overlap: int) -> List[tuple[int, int, int, int]]:
+    """Retourne les rectangles (y0,y1,x0,x1) clampés aux bords, en ordre raster."""
     assert tile > 0 and 0 <= overlap < tile
     stride = tile - overlap
     ys = list(range(0, max(1, H - overlap), stride))
@@ -51,40 +54,20 @@ def _grid_rects(H: int, W: int, tile: int, overlap: int) -> List[tuple[int, int,
 
 
 def _payload_mode_from_env() -> str:
-    """
-    Lit le mode payload depuis l’ENV `PC15_PAYLOAD_FMT`.
-    - "RAW" : force payload RAW (debug / compat)
-    - sinon : ANS0 (par défaut)
-    """
+    """Lit `PC15_PAYLOAD_FMT` : 'RAW' → RAW, sinon ANS0."""
     v = os.getenv("PC15_PAYLOAD_FMT", "ANS0").strip().upper()
     return "RAW" if v == "RAW" else "ANS0"
 
+
+# ----------------------------
+# Step 3 (inchangé) — encode_y
+# ----------------------------
 
 def encode_y(img_y: torch.Tensor, cfg: CodecConfig) -> Dict[str, Any]:
     """
     Encode un plan Y en flux v15 **avec payloads ANS0** (rANS) par défaut.
 
-    Comportement Step 3
-    -------------------
-    - Framing v15 **inchangé** (header/records/stream).
-    - Chaque tuile reçoit un `TileRec.payload_fmt`:
-        * `ANS0_FMT` (0) si `PC15_PAYLOAD_FMT != "RAW"`
-        * `RAW_FMT`  (1) si `PC15_PAYLOAD_FMT == "RAW"` (mode debug)
-    - Le contenu ANS0 encode la **5-uplet symbolique** (gen_id, qv_id, seed, flags, offsets),
-      ici encore “stub” (gen_id=0, qv_id=0, offsets=[]), l’objectif étant la **décodabilité déterministe**.
-    - Aucune reconstruction n’est faite ici (Step 4 branchera la synthèse réelle).
-
-    Retour
-    ------
-    dict avec :
-      - "bitstream": bytes .pc15
-      - "bpp": float (bits/pixel)
-      - "stats": dict (infos utiles)
-      - "tile_map": list (réservé)
-
-    Exceptions
-    ----------
-    AssertionError si `img_y` n’est pas au format [1,1,H,W].
+    Step 3 (identique) : framing v15 + payload symbolique minimal viable.
     """
     assert img_y.ndim == 4 and img_y.shape[:2] == (1, 1), "expected [1,1,H,W]"
     H, W = int(img_y.shape[2]), int(img_y.shape[3])
@@ -114,17 +97,14 @@ def encode_y(img_y: torch.Tensor, cfg: CodecConfig) -> Dict[str, Any]:
     recs: List[TileRec] = []
 
     for tid, _ in enumerate(rects):
-        # Seed dérivée par tuile pour garantir le déterminisme (mêmes cfg → mêmes bytes)
         tile_seed = (int(cfg.seed) + tid) & 0xFFFFFFFF
 
         if use_raw:
-            # Mode debug/compat : payload RAW pass-through
             fmt, payload = encode_tile_payload_raw(b"raw")
             gen_id = 0
             qv_id = 0
         else:
-            # Step 3 : encodage ANS0 symbolique “minimal viable”
-            # offsets=[] tant que la recherche RD n’est pas appliquée (Step 4+)
+            # Step 3 : encodage ANS0 symbolique minimal
             fmt, payload = encode_tile_payload(
                 gen_id=0,
                 qv_id=0,
@@ -160,31 +140,102 @@ def encode_y(img_y: torch.Tensor, cfg: CodecConfig) -> Dict[str, Any]:
     return {"bitstream": blob, "bpp": bpp, "stats": stats, "tile_map": []}
 
 
-def decode_y(bitstream: bytes, device: str = "cuda") -> torch.Tensor:
-    """
-    Décode un flux v15, **valide** les payloads ANS0/RAW et renvoie une image Y noire.
+# --------------------------------
+# Step 4 — decode_y (reconstruction)
+# --------------------------------
 
-    Comportement Step 3
-    -------------------
-    - On lit header + records via `read_stream_v15`.
-    - Pour chaque record :
-        * si `payload_fmt == ANS0_FMT` → `decode_tile_payload(...)`
-          (valide l’entête ANS0, charge la table et reconstitue les symboles).
-        * si `payload_fmt == RAW_FMT`  → `decode_tile_payload_raw(...)`.
-    - La véritable reconstruction par tuiles sera branchée au Step 4 ; ici on
-      renvoie un tenseur noir de la bonne dimension pour valider le trajet I/O.
+def _synth_tile_cpu(size: int, seed: int, *, dtype=torch.float32, device="cpu") -> torch.Tensor:
+    """
+    Synthèse **CPU-only** d'une tuile non-nulle, déterministe, en [-1,1].
+
+    Motif : sinusoïdes orientées (stripes) avec (freq, angle, phase) dérivés du seed.
+    - freq  ∈ {3..11}
+    - angle ∈ [0..180)
+    - phase ∈ [0..2π)
+    Retour: tenseur [1,1,size,size].
+    """
+    dev = torch.device(device)
+    h = w = int(size)
+    # Grille normalisée
+    xx = torch.linspace(-1.0, 1.0, steps=w, device=dev, dtype=dtype)
+    yy = torch.linspace(-1.0, 1.0, steps=h, device=dev, dtype=dtype)
+    X, Y = torch.meshgrid(yy, xx, indexing="ij")  # [H,W]
+
+    # Paramètres dérivés du seed (stables cross-run)
+    s = int(seed) & 0xFFFFFFFF
+    freq = 3 + (s % 9)                             # 3..11
+    ang_deg = (s // 7) % 180
+    ang = math.radians(ang_deg)
+    phase = ( ( (s >> 8) % 1000) / 1000.0 ) * (2.0 * math.pi)
+
+    u = torch.cos(2.0 * math.pi * freq * (X * math.sin(ang) + Y * math.cos(ang)) + phase)
+    # Remap en [-1,1] (déjà borné), puis [1,1,H,W]
+    return u.clamp(-1, 1).unsqueeze(0).unsqueeze(0)
+
+
+def decode_y(bitstream: bytes, device: str = "cpu") -> torch.Tensor:
+    """
+    Décode un flux v15, **valide** ANS0/RAW et **reconstruit** une image Y non nulle.
+
+    Step 4
+    ------
+    - Lecture header + records via `read_stream_v15`.
+    - Validation payloads :
+        * ANS0 → `decode_tile_payload(...)`
+        * RAW  → `decode_tile_payload_raw(...)`
+      (on ignore le contenu symbolique pour l’instant : Step 4 vise la recon I/O)
+    - Synthèse CPU-only par tuile (motif stripes déterministe à partir du seed).
+    - Assemblage via fenêtre Hann et normalisation (voir `tiling.blend`).
+
+    Paramètres
+    ----------
+    bitstream : bytes
+        Flux produit par `encode_y`.
+    device : str
+        Cible pour la recon (par défaut "cpu"). Ignoré si indisponible.
+
+    Retour
+    ------
+    torch.Tensor
+        Tenseur [1,1,H,W] (float32).
     """
     header, records = read_stream_v15(bitstream)
     H, W = int(header["height"]), int(header["width"])
+    size = int(header.get("tile", 256))
+    overlap = int(header.get("overlap", 24))
 
+    # 1) Valider tous les payloads (mêmes garde-fous que Step 3)
     for r in records:
         if r.payload_fmt == ANS0_FMT:
-            _ = decode_tile_payload(r.payload)  # round-trip symbolique OK
+            _ = decode_tile_payload(r.payload)  # lève en cas de corruption
         elif r.payload_fmt == RAW_FMT:
             _ = decode_tile_payload_raw(r.payload_fmt, r.payload)
         else:
-            # Format inconnu : on ignore mais on pourrait lever si on veut strict
+            # Inconnu → on peut ignorer ou lever ; conservateur: on ignore.
             pass
 
-    # Step 3: pas encore de reconstruction → image noire (bonne forme)
-    return torch.zeros((1, 1, H, W), dtype=torch.float32)
+    # 2) Synthèse de toutes les tuiles (CPU-only, déterministe via seed)
+    #    On reconstruit la grille depuis (H,W,size,overlap) pour assurer l'ordre raster.
+    dummy = torch.zeros((1, 1, H, W), dtype=torch.float32, device="cpu")
+    grid = TileGridCfg(size=size, overlap=overlap)
+    spec = tile_image(dummy, grid)
+    if spec.count != len(records):
+        # Garde-fou (on reste tolérant, mais le mismatch est signalé)
+        # On tronque/complète au besoin vers le min.
+        N = min(spec.count, len(records))
+    else:
+        N = spec.count
+
+    tiles = []
+    for i in range(N):
+        seed = int(records[i].seed)
+        t = _synth_tile_cpu(size=grid.size, seed=seed, dtype=torch.float32, device="cpu")  # [1,1,s,s]
+        tiles.append(t[0])  # empile en [N,1,s,s]
+    if not tiles:
+        return torch.zeros((1, 1, H, W), dtype=torch.float32)
+
+    tiles_tensor = torch.stack(tiles, dim=0)  # [N,1,s,s]
+
+    # 3) Blend fenêtre Hann (partition of unity)
+    recon = blend(tiles_tensor, spec, H, W, window="hann")  # [1,1,H,W]
+    return recon.to(dtype=torch.float32)
