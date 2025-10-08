@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 
 import torch
 
+from .config import CodecConfig  # <<< unifiée ici
+
 # v15 bitstream (package)
 from .bitstream import (
     TileRec,
